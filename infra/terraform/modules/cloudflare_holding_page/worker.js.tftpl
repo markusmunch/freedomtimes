@@ -1,0 +1,66 @@
+addEventListener("fetch", (event) => {
+  event.respondWith(handleRequest());
+});
+
+async function handleRequest() {
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${holding_title}</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 20% 10%, #f2f2ef 0%, #e6e5df 45%, #d9d8d1 100%);
+        color: #1a1a1a;
+        font-family: Georgia, "Times New Roman", serif;
+      }
+      main {
+        width: min(720px, 92vw);
+        background: rgba(255, 255, 255, 0.75);
+        border: 1px solid #c7c3b8;
+        border-radius: 14px;
+        padding: 2.5rem 2rem;
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.08);
+        backdrop-filter: blur(2px);
+      }
+      h1 {
+        margin: 0 0 0.8rem 0;
+        font-size: clamp(2rem, 6vw, 3rem);
+      }
+      p {
+        margin: 0;
+        font-size: 1.05rem;
+        line-height: 1.6;
+      }
+      .meta {
+        margin-top: 1.3rem;
+        color: #4a4a4a;
+        font-size: 0.95rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${holding_heading}</h1>
+      <p>${holding_message}</p>
+      ${contact_markup}
+    </main>
+  </body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=UTF-8",
+      "cache-control": "no-store"
+    }
+  });
+}
