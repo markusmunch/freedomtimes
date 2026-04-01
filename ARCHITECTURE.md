@@ -294,27 +294,21 @@ Azure Functions are deployed separately (either via GitHub Actions + Azure CLI o
 
 ---
 
-## 9. Two-Week Delivery Sketch
+## 9. Deliverables
 
-### Week 1 — Foundation & Public Site
+The following items are listed in priority order. Each should be completed and verified before moving to the next.
 
-| Day | Goal |
-|---|---|
-| 1–2 | Scaffold Astro project; configure Cloudflare Workers with `wrangler`; deploy "Hello World" to production URL |
-| 2–3 | Design system: typography, colour, CSS Grid layout; homepage shell |
-| 3–4 | KV integration: Worker reads story JSON from KV; story page template |
-| 4–5 | Static story fixtures in KV; homepage + article page rendering; Core Web Vitals baseline |
-| 5 | PWA: Web App Manifest + Service Worker; Lighthouse PWA audit |
-
-### Week 2 — Admin, Auth & MVP
-
-| Day | Goal |
-|---|---|
-| 6–7 | Azure Function scaffold; Cosmos DB container; CRUD endpoints; deploy to Azure |
-| 7–8 | Auth0 tenant setup; login flow in Astro Worker; JWT validation middleware |
-| 8–9 | Admin UI: story list, create/edit form, publish action (writes to KV) |
-| 9–10 | Image upload to R2; media embedding in story editor |
-| 10 | End-to-end smoke test; newsletter subscribe form + SendGrid/Resend wiring; MVP sign-off |
+1. Scaffold Astro project; configure Cloudflare Workers with `wrangler`; deploy "Hello World" to production URL.
+2. Design system: typography, colour palette, CSS Grid layout; homepage shell.
+3. KV integration: Worker reads story JSON from KV; story page template.
+4. Static story fixtures in KV; homepage + article page rendering; Core Web Vitals baseline.
+5. PWA: Web App Manifest + Service Worker; Lighthouse PWA audit.
+6. Azure Function scaffold; Cosmos DB containers; CRUD endpoints; deploy to Azure.
+7. Auth0 tenant setup; login flow in Astro Worker; JWT validation middleware.
+8. Admin UI: story list, create/edit form, publish action (writes to KV).
+9. Image and video upload to R2; media embedding in the story editor.
+10. Newsletter subscribe form; email digest wiring (Resend/SendGrid).
+11. End-to-end smoke test; Lighthouse audit; MVP sign-off.
 
 ---
 
