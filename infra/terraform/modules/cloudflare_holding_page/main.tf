@@ -1,0 +1,33 @@
+locals {
+  contact_markup = var.contact_email != "" ? "<p class=\"meta\">Contact: ${var.contact_email}</p>" : ""
+
+  worker_script = templatefile("${path.module}/worker.js.tftpl", {
+    holding_title   = var.holding_title
+    holding_heading = var.holding_heading
+    holding_message = var.holding_message
+    contact_markup  = local.contact_markup
+  })
+}
+
+resource "cloudflare_workers_script" "holding_page" {
+  account_id = var.account_id
+  name       = var.worker_name
+  content    = local.worker_script
+}
+
+resource "cloudflare_workers_route" "holding_page" {
+  zone_id     = var.zone_id
+  pattern     = var.route_pattern
+  script_name = cloudflare_workers_script.holding_page.name
+}
+
+resource "cloudflare_record" "apex" {
+  count = var.manage_apex_dns_record ? 1 : 0
+
+  zone_id = var.zone_id
+  name    = "@"
+  type    = "A"
+  content = var.apex_dns_record_content
+  proxied = true
+  ttl     = 1
+}

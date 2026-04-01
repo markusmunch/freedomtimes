@@ -1,0 +1,21 @@
+provider "cloudflare" {
+  api_token = var.cloudflare_api_token
+}
+
+module "cloudflare_holding_page" {
+  source = "../../modules/cloudflare_holding_page"
+
+  account_id = var.cloudflare_account_id
+  zone_id    = var.cloudflare_zone_id
+
+  worker_name   = var.worker_name
+  route_pattern = var.route_pattern
+
+  manage_apex_dns_record = var.manage_apex_dns_record
+  apex_dns_record_content = var.apex_dns_record_content
+
+  holding_title   = var.holding_title
+  holding_heading = var.holding_heading
+  holding_message = var.holding_message
+  contact_email   = var.contact_email
+}
