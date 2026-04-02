@@ -66,3 +66,21 @@ variable "contact_email" {
   type        = string
   default     = ""
 }
+
+variable "auth0_domain" {
+  description = "Auth0 tenant domain (e.g., tenant.us.auth0.com)"
+  type        = string
+  sensitive   = true
+}
+
+variable "auth0_client_id" {
+  description = "Auth0 Management API client ID"
+  type        = string
+  sensitive   = true
+}
+
+variable "auth0_client_secret" {
+  description = "Auth0 Management API client secret"
+  type        = string
+  sensitive   = true
+}

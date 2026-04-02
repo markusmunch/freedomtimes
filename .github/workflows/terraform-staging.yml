@@ -1,39 +1,34 @@
-name: Terraform – Production
+name: Terraform - Staging
 
 on:
-  push:
+  pull_request:
     branches: [main]
-    paths:
-      - "infra/terraform/**"
-      - "web/**"
-      - ".github/workflows/terraform-production.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: true
+
 jobs:
   terraform:
-    name: ${{ github.event_name == 'push' && 'Apply' || 'Plan' }}
+    name: "Apply to Staging"
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: infra/terraform/environments/production
+        working-directory: infra/terraform/environments/staging
 
     env:
-      TF_TOKEN_app_terraform_io: ${{ secrets.TF_TOKEN_app_terraform_io }}
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_TOKEN_APP_TERRAFORM_IO }}
       TF_VAR_cloudflare_api_token: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_account_id: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
       TF_VAR_cloudflare_zone_id: ${{ secrets.TF_VAR_CLOUDFLARE_ZONE_ID }}
-      TF_VAR_route_pattern: ${{ vars.TF_VAR_ROUTE_PATTERN }}
-      TF_VAR_worker_name: ${{ vars.TF_VAR_WORKER_NAME }}
-      TF_VAR_holding_title: ${{ vars.TF_VAR_HOLDING_TITLE }}
-      TF_VAR_holding_heading: ${{ vars.TF_VAR_HOLDING_HEADING }}
-      TF_VAR_holding_message: ${{ vars.TF_VAR_HOLDING_MESSAGE }}
-      TF_VAR_build_revision: ${{ github.sha }}
-      TF_VAR_contact_email: ${{ vars.TF_VAR_CONTACT_EMAIL }}
-      TF_VAR_manage_apex_dns_record: "true"
+      TF_VAR_route_pattern: "staging.freedomtimes.news/*"
+      TF_VAR_worker_name: "freedomtimes-holding-staging"
+      TF_VAR_manage_apex_dns_record: "false"
       TF_VAR_apex_dns_record_content: "192.0.2.1"
       TF_VAR_auth0_domain: ${{ secrets.TF_VAR_AUTH0_DOMAIN }}
       TF_VAR_auth0_client_id: ${{ secrets.TF_VAR_AUTH0_CLIENT_ID }}
@@ -73,11 +68,10 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('fs');
             const plan = require('child_process')
-              .execSync('terraform show -no-color tfplan', { cwd: 'infra/terraform/environments/production' })
+              .execSync('terraform show -no-color tfplan', { cwd: 'infra/terraform/environments/staging' })
               .toString();
-            const body = `### Terraform Plan – Production\n\`\`\`\n${plan.substring(0, 60000)}\n\`\`\``;
+            const body = `### Terraform Plan - Staging\n\`\`\`\n${plan.substring(0, 60000)}\n\`\`\``;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -86,11 +80,10 @@ jobs:
             });
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: terraform apply -lock-timeout=5m tfplan
 
       - name: Setup Node
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -98,34 +91,30 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install Web Dependencies
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         working-directory: web
         run: npm ci
 
       - name: Build Astro Worker
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         working-directory: web
         run: npm run build
 
-      - name: Deploy Astro Worker to Production
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      - name: Deploy Astro Worker to Staging
         working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
           AUTH0_DOMAIN: ${{ secrets.TF_VAR_AUTH0_DOMAIN }}
-          AUTH0_CLIENT_ID: ${{ secrets.AUTH0_LOGIN_APP_CLIENT_ID_PRODUCTION }}
+          AUTH0_CLIENT_ID: ${{ secrets.AUTH0_LOGIN_APP_CLIENT_ID_STAGING }}
         run: >
-          npx wrangler deploy --config wrangler.production.jsonc
+          npx wrangler deploy --config wrangler.staging.jsonc
           --var AUTH0_DOMAIN:$AUTH0_DOMAIN
           --var AUTH0_CLIENT_ID:$AUTH0_CLIENT_ID
 
-      - name: Set Worker Secrets for Production
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      - name: Set Worker Secrets for Staging
         working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
-          AUTH0_CLIENT_SECRET_VALUE: ${{ secrets.AUTH0_LOGIN_APP_CLIENT_SECRET_PRODUCTION }}
+          AUTH0_CLIENT_SECRET_VALUE: ${{ secrets.AUTH0_LOGIN_APP_CLIENT_SECRET_STAGING }}
         run: |
-          printf '%s' "$AUTH0_CLIENT_SECRET_VALUE" | npx wrangler secret put AUTH0_CLIENT_SECRET --config wrangler.production.jsonc
+          printf '%s' "$AUTH0_CLIENT_SECRET_VALUE" | npx wrangler secret put AUTH0_CLIENT_SECRET --config wrangler.staging.jsonc

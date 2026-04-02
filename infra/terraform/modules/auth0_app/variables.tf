@@ -3,6 +3,12 @@ variable "auth0_domain" {
   type        = string
 }
 
+variable "create_shared_resources" {
+  description = "Whether to create tenant-wide resources (resource server, roles, action). Set false for non-production environments."
+  type        = bool
+  default     = true
+}
+
 variable "app_name" {
   description = "Auth0 application name"
   type        = string
@@ -21,16 +27,8 @@ variable "workspace_url" {
   default     = "https://freedomtimes.news"
 }
 
-variable "auth0_action_client_id" {
-  description = "Auth0 M2M app client ID for Actions (with read:users and read:roles scopes)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "auth0_action_client_secret" {
-  description = "Auth0 M2M app client secret for Actions"
-  type        = string
-  sensitive   = true
-  default     = ""
+variable "extra_workspace_urls" {
+  description = "Additional workspace base URLs to allow for callbacks/logout/origins (e.g., staging)"
+  type        = list(string)
+  default     = []
 }
