@@ -4,25 +4,47 @@ This app implements the current staging auth gate flow:
 
 1. Holding page with a `Log in with Google` button
 2. Auth0 login through Google SSO
-3. If role includes `admin`, user is sent to `/signed-in`
-4. If not admin, user is redirected back to the holding page
+3. If role includes `admin` or `editor`, user is sent to `/signed-in`
+4. If no required role is present, user is redirected back to the holding page
 
 ## Environment Variables
 
 Copy `.env.example` to `.env` and set values:
 
 ```sh
-AUTH0_DOMAIN=freedomtimes.uk.auth0.com
+AUTH0_DOMAIN=your-tenant.example-auth0.com
 AUTH0_CLIENT_ID=...
 AUTH0_CLIENT_SECRET=...
+AUTH0_API_AUDIENCE=...
+API_BASE_URL=...
+COOKIE_BASE_DOMAIN=example.com
+AUTH0_ROLES_CLAIM_NAMESPACE=https://example.com
+API_UPSTREAM_MODE=apim
 ```
+
+Local development does not use `scripts/set-github-secrets.ps1`.
+`wrangler dev` / Astro reads local env files directly, so keys must use the pure runtime names shown above (for example `AUTH0_DOMAIN`, not prefixed aliases).
 
 Role detection checks either of these claims in the ID token:
 
-- `https://freedomtimes.news/roles`
+- `${AUTH0_ROLES_CLAIM_NAMESPACE}/roles` (when namespace is configured)
 - `roles`
 
 The user is considered admin only if one role equals `admin` (case-insensitive).
+
+## Wrangler Config Files
+
+Two wrangler configs exist in `web/` — do not merge them:
+
+| File | Purpose |
+|---|---|
+| `wrangler.build.jsonc` | Used by `npm run build` via `astro.config.mjs`. No `main` field — the Astro adapter generates `dist/server/entry.mjs` at build time and the `@cloudflare/vite-plugin` would error if `main` pointed to a file that does not yet exist. |
+| `wrangler.jsonc` | Used by `npx wrangler deploy`. Has `main: "dist/server/entry.mjs"` and full `env` blocks with vars for staging and production. |
+
+**Never add `main` to `wrangler.build.jsonc`.  
+Never run `npx wrangler deploy` without `--config .\web\wrangler.jsonc --env <staging|production>` from repo root.**
+
+See also: `scripts/set-github-secrets.md` for syncing Worker secrets after deploy.
 
 ## Commands
 
@@ -40,3 +62,112 @@ Run all commands from `web/`:
 - `/auth/callback` handles code exchange + role check
 - `/auth/logout` clears app session + logs out at Auth0
 - `/signed-in` protected admin page
+
+## Auth0 Scope and Consent
+
+- Login requests `scope=openid` for minimal identity claims.
+- Login also requests the configured API audience so Auth0 issues an API access token used by the cookie-to-APIM flow.
+- The Auth0 API is configured to skip first-party consent prompts, so normal staging/production login should not show the consent screen.
+
+## Staging Login Flow Runbook
+
+Expected end-to-end behavior on your configured staging workspace URL:
+
+1. `GET /auth/login`
+2. Redirect to Auth0 authorize endpoint
+3. `GET /auth/callback?code=...&state=...`
+4. Role check passes for `admin` or `editor`
+5. Redirect to `GET /signed-in`
+6. Token verifies and page renders
+
+Primary cookie names used by web auth:
+
+- `ft_session` (HttpOnly id token)
+- `ft_access_token` (HttpOnly API access token)
+- `ft_csrf` (JS-readable CSRF token)
+
+Stale-cookie protections:
+
+- Callback and logout clear both host-only and domain-scoped cookie variants before setting or deleting auth cookies.
+- Signed-in clears auth cookies and redirects to `/auth/login` when token verification fails with expired token.
+- Signed-in detects duplicate `ft_session` values in the incoming `Cookie` header, clears auth cookies, and forces clean login.
+
+Role denial behavior:
+
+- If callback token verifies but required role is missing, auth cookies are cleared and user is redirected to `/?denied=1`.
+
+### Live Tail Verification
+
+Use Cloudflare live tail during each auth test:
+
+```powershell
+cd web
+npx wrangler tail freedomtimes-holding-staging --format pretty
+```
+
+Report each attempt using this format:
+
+- `auth/login outcome`
+- `auth/callback outcome`
+- `signed-in outcome`
+- `final redirect/result`
+- `any token verification or role-check errors`
+
+Example success signal sequence:
+
+- `[auth.login] starting login redirect`
+- `[auth.callback] callback received`
+- `[auth.callback] login successful`
+- `[signed-in] token verified and page render allowed`
+
+## API Auth Model (Target)
+
+The target model for editorial API access is cookie-forwarded auth through APIM:
+
+1. App issues API token in an HttpOnly cookie scoped for the parent domain.
+2. Browser calls API host on subdomain with credentialed requests.
+3. APIM extracts token from cookie, sets upstream Authorization header, and validates roles.
+4. EasyAuth validates bearer token at Function boundary.
+
+Security requirements for this model:
+
+- explicit credentialed CORS policy on APIM
+- CSRF protection on state-changing endpoints
+- strict cookie attributes (`HttpOnly`, `Secure`, domain/path scope, short expiry)
+- APIM header sanitization so client-provided auth header is not trusted
+
+Current implementation note:
+
+- The signed-in API test page now calls APIM with `credentials: include` and does not read or attach bearer tokens in browser JavaScript.
+
+## Staging Deployment Command (Cloudflare Worker)
+
+To deploy the staging Cloudflare Worker with all required runtime variables (matching CI):
+
+```powershell
+cd web
+npx wrangler deploy --config wrangler.jsonc --env staging \
+  --var "AUTH0_API_AUDIENCE:https://api.freedomtimes.news" \
+  --var "API_BASE_URL:https://api-staging.freedomtimes.news/editorial" \
+  --var "COOKIE_BASE_DOMAIN:freedomtimes.news" \
+  --var "AUTH0_ROLES_CLAIM_NAMESPACE:https://freedomtimes.news/roles" \
+  --var "API_UPSTREAM_MODE:apim"
+```
+
+- This command must be run from the `web/` directory.
+- All `--var` flags are required for correct runtime configuration.
+- Secrets must be set separately using `npx wrangler secret put ...` for each secret (see below).
+
+**Note:** This matches the GitHub Actions CI deploy process. If you skip any vars or secrets, the Worker may not function correctly at runtime.
+
+### After Deploy: Sync Secrets
+
+After deploying, re-sync all required secrets:
+
+```powershell
+npx wrangler secret put AUTH0_DOMAIN
+npx wrangler secret put AUTH0_CLIENT_ID
+npx wrangler secret put AUTH0_CLIENT_SECRET
+```
+
+You will be prompted for each value. These must match the values used in CI and production.

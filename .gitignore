@@ -1,4 +1,6 @@
 .terraform/
+node_modules/
+**/node_modules/
 *.tfstate
 *.tfstate.*
 *.tfplan
@@ -8,5 +10,25 @@ crash.log
 *.tfvars.json
 !*.tfvars.example
 
+# Certificates and private keys
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
+*.csr
+
 # Local env files
 .env.dev
+.env.staging
+.env.production
+*.har
+certs/*
+infra/terraform/environments/staging/.wrangler/cache/wrangler-account.json
+infra/terraform/environments/staging/tfplan
+infra/terraform/environments/production/tfplan
+infra/terraform/environments/production/tfplan
+.wrangler/cache/wrangler-account.json
+infra/terraform/environments/production/.wrangler/cache/wrangler-account.json
+.tmp/*

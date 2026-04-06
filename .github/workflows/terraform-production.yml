@@ -1,43 +1,66 @@
-name: Terraform – Production
+name: Terraform - Production
 
 on:
   push:
     branches: [main]
     paths:
       - "infra/terraform/**"
+      - "functions/editorial-api/**"
       - "web/**"
       - ".github/workflows/terraform-production.yml"
   workflow_dispatch:
+    inputs:
+      production_terraform_apply:
+        description: "Run Terraform apply (true) or plan-only (false)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
-  pull-requests: write
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+env:
+  PRODUCTION_TERRAFORM_APPLY: "false"
 
 jobs:
   terraform:
-    name: ${{ github.event_name == 'push' && 'Apply' || 'Plan' }}
+    name: "Apply to Production"
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: infra/terraform/environments/production
 
     env:
-      TF_TOKEN_app_terraform_io: ${{ secrets.TF_TOKEN_app_terraform_io }}
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_TOKEN_APP_TERRAFORM_IO }}
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
       TF_VAR_cloudflare_api_token: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_account_id: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
       TF_VAR_cloudflare_zone_id: ${{ secrets.TF_VAR_CLOUDFLARE_ZONE_ID }}
-      TF_VAR_route_pattern: ${{ vars.TF_VAR_ROUTE_PATTERN }}
-      TF_VAR_worker_name: ${{ vars.TF_VAR_WORKER_NAME }}
-      TF_VAR_holding_title: ${{ vars.TF_VAR_HOLDING_TITLE }}
-      TF_VAR_holding_heading: ${{ vars.TF_VAR_HOLDING_HEADING }}
-      TF_VAR_holding_message: ${{ vars.TF_VAR_HOLDING_MESSAGE }}
-      TF_VAR_build_revision: ${{ github.sha }}
-      TF_VAR_contact_email: ${{ vars.TF_VAR_CONTACT_EMAIL }}
-      TF_VAR_manage_apex_dns_record: "true"
-      TF_VAR_apex_dns_record_content: "192.0.2.1"
+      TF_VAR_azure_location: ${{ vars.TF_VAR_AZURE_LOCATION }}
+      TF_VAR_route_pattern: ${{ vars.TF_VAR_ROUTE_PATTERN_PRODUCTION }}
+      TF_VAR_worker_name: ${{ vars.TF_VAR_WORKER_NAME_PRODUCTION }}
+      TF_VAR_manage_apex_dns_record: ${{ vars.TF_VAR_MANAGE_APEX_DNS_RECORD_PRODUCTION }}
+      TF_VAR_apex_dns_record_content: ${{ vars.TF_VAR_APEX_DNS_RECORD_CONTENT_PRODUCTION }}
+      TF_VAR_api_custom_hostname: ${{ vars.TF_VAR_API_CUSTOM_HOSTNAME_PRODUCTION }}
+      TF_VAR_api_custom_hostname_certificate_base64: ${{ secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64_PRODUCTION }}
+      TF_VAR_api_custom_hostname_certificate_password: ${{ secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD_PRODUCTION }}
+      # Keep CNAME unproxied during apply so Azure APIM can verify ownership.
+      # A targeted second apply re-proxies it after the custom domain is registered.
+      TF_VAR_api_custom_hostname_proxied: "false"
+      CERT_SECRETS_CONFIGURED: ${{ secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64_PRODUCTION != '' && secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD_PRODUCTION != '' }}
+      TF_VAR_workspace_url: ${{ vars.TF_VAR_WORKSPACE_URL_PRODUCTION }}
+      TF_VAR_auth0_api_identifier: ${{ vars.AUTH0_API_AUDIENCE }}
+      TF_VAR_api_management_allowed_origins: ${{ vars.TF_VAR_API_MANAGEMENT_ALLOWED_ORIGINS_PRODUCTION }}
       TF_VAR_auth0_domain: ${{ secrets.TF_VAR_AUTH0_DOMAIN }}
-      TF_VAR_auth0_client_id: ${{ secrets.TF_VAR_AUTH0_CLIENT_ID }}
-      TF_VAR_auth0_client_secret: ${{ secrets.TF_VAR_AUTH0_CLIENT_SECRET }}
+      TF_VAR_auth0_management_client_id: ${{ secrets.TF_VAR_AUTH0_MANAGEMENT_CLIENT_ID || secrets.TF_VAR_AUTH0_CLIENT_ID }}
+      TF_VAR_auth0_management_client_secret: ${{ secrets.TF_VAR_AUTH0_MANAGEMENT_CLIENT_SECRET || secrets.TF_VAR_AUTH0_CLIENT_SECRET }}
 
     steps:
       - uses: actions/checkout@v4
@@ -48,84 +71,363 @@ jobs:
           terraform_version: "1.14.8"
           terraform_wrapper: false
 
+      - name: Validate Required Terraform Environment
+        run: |
+          set -euo pipefail
+
+          required=(
+            TF_TOKEN_app_terraform_io
+            ARM_CLIENT_ID
+            ARM_CLIENT_SECRET
+            ARM_SUBSCRIPTION_ID
+            ARM_TENANT_ID
+            TF_VAR_cloudflare_api_token
+            TF_VAR_cloudflare_account_id
+            TF_VAR_cloudflare_zone_id
+            TF_VAR_auth0_domain
+            TF_VAR_auth0_management_client_id
+            TF_VAR_auth0_management_client_secret
+            TF_VAR_route_pattern
+            TF_VAR_workspace_url
+            TF_VAR_api_management_allowed_origins
+          )
+
+          missing=()
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required environment variables: ${missing[*]}"
+            exit 1
+          fi
+
+          echo "All required Terraform environment variables are present."
+
+      - name: Preflight Unlock Stale TFC Lock
+        env:
+          TFC_ORG: freedomtimes
+          TFC_WORKSPACE: freedomtimes-production
+        run: |
+          set -euo pipefail
+          API_BASE="https://app.terraform.io/api/v2"
+          AUTH_HEADER="Authorization: Bearer $TF_TOKEN_app_terraform_io"
+          CT_HEADER="Content-Type: application/vnd.api+json"
+
+          WS_JSON=$(curl -sS -H "$AUTH_HEADER" "$API_BASE/organizations/$TFC_ORG/workspaces/$TFC_WORKSPACE")
+          WS_ID=$(echo "$WS_JSON" | jq -r '.data.id')
+          LOCKED=$(echo "$WS_JSON" | jq -r '.data.attributes.locked')
+
+          echo "workspace_id=$WS_ID locked=$LOCKED"
+
+          if [ "$LOCKED" = "true" ]; then
+            echo "Stale lock detected, submitting unlock before terraform init"
+            curl -sS -X POST \
+              -H "$AUTH_HEADER" \
+              -H "$CT_HEADER" \
+              --data '{"reason":"Auto-unlock stale lock before production workflow run"}' \
+              "$API_BASE/workspaces/$WS_ID/actions/unlock" >/dev/null
+            sleep 3
+          fi
+
       - name: Terraform Init
         run: terraform init -input=false
+
 
       - name: Terraform Validate
         run: terraform validate
 
+      - name: Adopt Existing API CNAME Record
+        if: env.CERT_SECRETS_CONFIGURED == 'true'
+        run: |
+          set -euo pipefail
+
+          RESOURCE_ADDR='cloudflare_record.api_custom_hostname[0]'
+          HOSTNAME="$TF_VAR_api_custom_hostname"
+
+          if terraform state show "$RESOURCE_ADDR" >/dev/null 2>&1; then
+            echo "Cloudflare API hostname record already tracked in Terraform state"
+            exit 0
+          fi
+
+          RECORD_ID=$(curl -sS \
+            -H "Authorization: Bearer $TF_VAR_cloudflare_api_token" \
+            "https://api.cloudflare.com/client/v4/zones/$TF_VAR_cloudflare_zone_id/dns_records?type=CNAME&name=$HOSTNAME" \
+            | jq -r '.result[0].id // empty')
+
+          if [ -z "$RECORD_ID" ]; then
+            echo "No existing Cloudflare CNAME for $HOSTNAME found; Terraform will create it"
+            exit 0
+          fi
+
+          echo "Importing existing Cloudflare DNS record into Terraform state"
+          terraform import -input=false "$RESOURCE_ADDR" "$TF_VAR_cloudflare_zone_id/$RECORD_ID"
+
       - name: Terraform Plan
         id: plan
+        timeout-minutes: 20
         run: |
+          echo "Starting terraform plan (non-interactive) with heartbeat logging..."
           set +e
-          terraform plan -lock-timeout=5m -no-color -out=tfplan
+          timeout 12m terraform plan -input=false -lock-timeout=5m -no-color -detailed-exitcode -out=tfplan > plan.log 2>&1 &
+          PLAN_PID=$!
+
+          while kill -0 "$PLAN_PID" 2>/dev/null; do
+            echo "[plan-heartbeat] $(date -u +"%Y-%m-%dT%H:%M:%SZ") terraform plan still running"
+            tail -n 20 plan.log || true
+            sleep 30
+          done
+
+          wait "$PLAN_PID"
           PLAN_EXIT=$?
           set -e
+
+          echo "--- terraform plan output ---"
+          cat plan.log
+
+          if [ "$PLAN_EXIT" -eq 124 ]; then
+            echo "terraform plan timed out after 12 minutes"
+            exit 1
+          fi
+
           if [ "$PLAN_EXIT" -eq 1 ]; then
             echo "terraform plan failed with exit code 1"
             exit 1
           fi
-          echo "terraform plan exit code: $PLAN_EXIT"
+          if [ "$PLAN_EXIT" -eq 0 ]; then
+            echo "terraform plan completed: no changes"
+          elif [ "$PLAN_EXIT" -eq 2 ]; then
+            echo "terraform plan completed: changes detected"
+          else
+            echo "terraform plan returned unexpected exit code: $PLAN_EXIT"
+            exit "$PLAN_EXIT"
+          fi
         continue-on-error: false
 
-      - name: Post plan to PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const plan = require('child_process')
-              .execSync('terraform show -no-color tfplan', { cwd: 'infra/terraform/environments/production' })
-              .toString();
-            const body = `### Terraform Plan – Production\n\`\`\`\n${plan.substring(0, 60000)}\n\`\`\``;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
-
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        run: terraform apply -lock-timeout=5m tfplan
+        if: (env.PRODUCTION_TERRAFORM_APPLY == 'true') || (github.event_name == 'workflow_dispatch' && github.event.inputs.production_terraform_apply == 'true')
+        timeout-minutes: 30
+        run: |
+          echo "Starting terraform apply with heartbeat logging..."
+          set +e
+          timeout 20m terraform apply -input=false -lock-timeout=5m -no-color tfplan > apply.log 2>&1 &
+          APPLY_PID=$!
+
+          while kill -0 "$APPLY_PID" 2>/dev/null; do
+            echo "[apply-heartbeat] $(date -u +"%Y-%m-%dT%H:%M:%SZ") terraform apply still running"
+            tail -n 20 apply.log || true
+            sleep 30
+          done
+
+          wait "$APPLY_PID"
+          APPLY_EXIT=$?
+          set -e
+
+          echo "--- terraform apply output ---"
+          cat apply.log
+
+          if [ "$APPLY_EXIT" -eq 124 ]; then
+            echo "terraform apply timed out after 20 minutes"
+            exit 1
+          fi
+
+          if [ "$APPLY_EXIT" -ne 0 ]; then
+            echo "terraform apply failed with exit code $APPLY_EXIT"
+            exit "$APPLY_EXIT"
+          fi
+
+      - name: Capture Terraform Outputs
+        id: tf_outputs
+        run: |
+          set -euo pipefail
+
+          AUTH0_APP_CLIENT_ID=$(terraform output -raw auth0_app_client_id 2>/dev/null || echo "")
+          API_BASE_URL=$(terraform output -raw azure_editorial_api_public_base_url 2>/dev/null || echo "")
+          FUNCTION_APP_NAME=$(terraform output -raw azure_function_app_name 2>/dev/null || echo "")
+          RESOURCE_GROUP_NAME=$(terraform output -raw azure_resource_group_name 2>/dev/null || echo "")
+
+          echo "auth0_app_client_id=$AUTH0_APP_CLIENT_ID" >> $GITHUB_OUTPUT
+          echo "api_base_url=$API_BASE_URL" >> $GITHUB_OUTPUT
+          echo "function_app_name=$FUNCTION_APP_NAME" >> $GITHUB_OUTPUT
+          echo "resource_group_name=$RESOURCE_GROUP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Fetch Auth0 App Secret
+        id: auth0_app_secret
+        env:
+          AUTH0_DOMAIN: ${{ secrets.TF_VAR_AUTH0_DOMAIN }}
+          AUTH0_MANAGEMENT_CLIENT_ID: ${{ secrets.TF_VAR_AUTH0_MANAGEMENT_CLIENT_ID || secrets.TF_VAR_AUTH0_CLIENT_ID }}
+          AUTH0_MANAGEMENT_CLIENT_SECRET: ${{ secrets.TF_VAR_AUTH0_MANAGEMENT_CLIENT_SECRET || secrets.TF_VAR_AUTH0_CLIENT_SECRET }}
+          AUTH0_APP_CLIENT_ID: ${{ steps.tf_outputs.outputs.auth0_app_client_id }}
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(curl -sS --fail \
+            --request POST \
+            --url "https://${AUTH0_DOMAIN}/oauth/token" \
+            --header 'content-type: application/json' \
+            --data "{\"grant_type\":\"client_credentials\",\"client_id\":\"${AUTH0_MANAGEMENT_CLIENT_ID}\",\"client_secret\":\"${AUTH0_MANAGEMENT_CLIENT_SECRET}\",\"audience\":\"https://${AUTH0_DOMAIN}/api/v2/\"}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+          AUTH0_APP_CLIENT_SECRET=$(curl -sS --fail \
+            --url "https://${AUTH0_DOMAIN}/api/v2/clients/${AUTH0_APP_CLIENT_ID}" \
+            --header "authorization: Bearer ${TOKEN}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['client_secret'])")
+
+          echo "::add-mask::$AUTH0_APP_CLIENT_SECRET"
+          echo "auth0_app_client_secret=$AUTH0_APP_CLIENT_SECRET" >> "$GITHUB_OUTPUT"
+
+      - name: Re-proxy API CNAME after Custom Domain Validation
+        if: >
+          env.CERT_SECRETS_CONFIGURED == 'true' &&
+          ((env.PRODUCTION_TERRAFORM_APPLY == 'true') ||
+           (github.event_name == 'workflow_dispatch' && github.event.inputs.production_terraform_apply == 'true'))
+        run: |
+          set -euo pipefail
+          echo "Flipping API CNAME back to proxied=true after APIM custom domain validation..."
+          terraform apply \
+            -input=false \
+            -lock-timeout=5m \
+            -no-color \
+            -auto-approve \
+            -var="api_custom_hostname_proxied=true" \
+            -target='cloudflare_record.api_custom_hostname[0]'
+          echo "API CNAME is now proxied."
+
+      - name: Cleanup Terraform Plan File
+        if: always()
+        run: rm -f tfplan
 
       - name: Setup Node
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            functions/editorial-api/package-lock.json
+
+      - name: Install Function App Dependencies
+        working-directory: functions/editorial-api
+        run: npm ci
+
+      - name: Azure Login for Function Deploy
+        if: steps.tf_outputs.outputs.function_app_name != '' && steps.tf_outputs.outputs.function_app_name != 'null'
+        uses: azure/login@v2
+        with:
+          creds: >-
+            {"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}
+
+      - name: Deploy Stub Azure Function App to Production
+        if: steps.tf_outputs.outputs.function_app_name != '' && steps.tf_outputs.outputs.function_app_name != 'null'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ steps.tf_outputs.outputs.function_app_name }}
+          package: ./functions/editorial-api
+          remote-build: true
+          respect-funcignore: true
+
+      - name: Function App Deploy Complete
+        if: steps.tf_outputs.outputs.function_app_name != '' && steps.tf_outputs.outputs.function_app_name != 'null'
+        run: echo "Deploy Stub Azure Function App to Production completed successfully"
+
+      - name: Validate Worker Runtime Vars
+        if: steps.tf_outputs.outputs.api_base_url != '' && steps.tf_outputs.outputs.api_base_url != 'null'
+        run: |
+          set -euo pipefail
+          API_BASE_URL="${{ steps.tf_outputs.outputs.api_base_url }}"
+          AUTH0_API_AUDIENCE="${{ vars.AUTH0_API_AUDIENCE || 'https://api.freedomtimes.news' }}"
+          COOKIE_BASE_DOMAIN="${{ vars.COOKIE_BASE_DOMAIN }}"
+          AUTH0_ROLES_CLAIM_NAMESPACE="${{ vars.AUTH0_ROLES_CLAIM_NAMESPACE }}"
+
+          if [ -z "$API_BASE_URL" ] || [ "$API_BASE_URL" = "null" ]; then
+            echo "Missing required Terraform output: azure_editorial_api_public_base_url"
+            exit 1
+          fi
+
+          if [ -z "$AUTH0_API_AUDIENCE" ] || [ "$AUTH0_API_AUDIENCE" = "null" ]; then
+            echo "Missing required repository var: AUTH0_API_AUDIENCE"
+            exit 1
+          fi
+
+          if [ -z "$COOKIE_BASE_DOMAIN" ]; then
+            echo "Missing required repository var: COOKIE_BASE_DOMAIN"
+            exit 1
+          fi
+
+          if [ -z "$AUTH0_ROLES_CLAIM_NAMESPACE" ]; then
+            echo "Missing required repository var: AUTH0_ROLES_CLAIM_NAMESPACE"
+            exit 1
+          fi
 
       - name: Install Web Dependencies
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         working-directory: web
         run: npm ci
 
       - name: Build Astro Worker
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         working-directory: web
         run: npm run build
 
       - name: Deploy Astro Worker to Production
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: steps.tf_outputs.outputs.api_base_url != '' && steps.tf_outputs.outputs.api_base_url != 'null'
         working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
-          AUTH0_DOMAIN: ${{ secrets.TF_VAR_AUTH0_DOMAIN }}
-          AUTH0_CLIENT_ID: ${{ secrets.AUTH0_LOGIN_APP_CLIENT_ID_PRODUCTION }}
+          AUTH0_API_AUDIENCE: ${{ vars.AUTH0_API_AUDIENCE || 'https://api.freedomtimes.news' }}
+          API_BASE_URL: ${{ steps.tf_outputs.outputs.api_base_url }}
+          COOKIE_BASE_DOMAIN: ${{ vars.COOKIE_BASE_DOMAIN }}
+          AUTH0_ROLES_CLAIM_NAMESPACE: ${{ vars.AUTH0_ROLES_CLAIM_NAMESPACE }}
+          API_UPSTREAM_MODE: ${{ vars.API_UPSTREAM_MODE }}
         run: >
-          npx wrangler deploy --config wrangler.production.jsonc
-          --var AUTH0_DOMAIN:$AUTH0_DOMAIN
-          --var AUTH0_CLIENT_ID:$AUTH0_CLIENT_ID
+          npx wrangler deploy --config wrangler.jsonc --env production
+          --var AUTH0_API_AUDIENCE:$AUTH0_API_AUDIENCE
+          --var API_BASE_URL:$API_BASE_URL
+          --var COOKIE_BASE_DOMAIN:$COOKIE_BASE_DOMAIN
+          --var AUTH0_ROLES_CLAIM_NAMESPACE:$AUTH0_ROLES_CLAIM_NAMESPACE
+          --var API_UPSTREAM_MODE:$API_UPSTREAM_MODE
 
       - name: Set Worker Secrets for Production
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: steps.tf_outputs.outputs.api_base_url != '' && steps.tf_outputs.outputs.api_base_url != 'null'
         working-directory: web
+        # Cloudflare Worker secrets are synced here from Terraform outputs and Auth0 Management API.
+        # Auth0 login app credentials come from the Terraform-managed application.
+        # Canonical source: Terraform/Auth0 → workflow → Cloudflare Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
-          AUTH0_CLIENT_SECRET_VALUE: ${{ secrets.AUTH0_LOGIN_APP_CLIENT_SECRET_PRODUCTION }}
+          AUTH0_DOMAIN_VALUE: ${{ secrets.TF_VAR_AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID_VALUE: ${{ steps.tf_outputs.outputs.auth0_app_client_id }}
+          AUTH0_CLIENT_SECRET_VALUE: ${{ steps.auth0_app_secret.outputs.auth0_app_client_secret }}
         run: |
-          printf '%s' "$AUTH0_CLIENT_SECRET_VALUE" | npx wrangler secret put AUTH0_CLIENT_SECRET --config wrangler.production.jsonc
+          printf '%s' "$AUTH0_DOMAIN_VALUE" | npx wrangler secret put AUTH0_DOMAIN --config wrangler.jsonc --env production
+          printf '%s' "$AUTH0_CLIENT_ID_VALUE" | npx wrangler secret put AUTH0_CLIENT_ID --config wrangler.jsonc --env production
+          printf '%s' "$AUTH0_CLIENT_SECRET_VALUE" | npx wrangler secret put AUTH0_CLIENT_SECRET --config wrangler.jsonc --env production
+
+      - name: Cleanup Unlock TFC Workspace
+        if: always()
+        env:
+          TFC_ORG: freedomtimes
+          TFC_WORKSPACE: freedomtimes-production
+        run: |
+          set -euo pipefail
+          API_BASE="https://app.terraform.io/api/v2"
+          AUTH_HEADER="Authorization: Bearer $TF_TOKEN_app_terraform_io"
+          CT_HEADER="Content-Type: application/vnd.api+json"
+
+          WS_JSON=$(curl -sS -H "$AUTH_HEADER" "$API_BASE/organizations/$TFC_ORG/workspaces/$TFC_WORKSPACE")
+          WS_ID=$(echo "$WS_JSON" | jq -r '.data.id')
+          LOCKED=$(echo "$WS_JSON" | jq -r '.data.attributes.locked')
+
+          if [ "$LOCKED" = "true" ]; then
+            echo "Workspace lock still present at job end, submitting cleanup unlock"
+            curl -sS -X POST \
+              -H "$AUTH_HEADER" \
+              -H "$CT_HEADER" \
+              --data '{"reason":"Auto-unlock cleanup after production workflow run"}' \
+              "$API_BASE/workspaces/$WS_ID/actions/unlock" >/dev/null || true
+          else
+            echo "Workspace already unlocked"
+          fi
+

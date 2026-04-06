@@ -2,16 +2,26 @@ import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify, type JWTPayload }
 import { env as cfEnv } from 'cloudflare:workers';
 
 export const SESSION_COOKIE = 'ft_session';
+export const ACCESS_TOKEN_COOKIE = 'ft_access_token';
+export const CSRF_COOKIE = 'ft_csrf';
 const STATE_COOKIE = 'ft_state';
-const ROLE_CLAIMS = [
-  'https://freedomtimes.news/roles',
-  'roles',
-];
+
+function getRoleClaims(): string[] {
+  const namespace = readOptionalEnv('AUTH0_ROLES_CLAIM_NAMESPACE').trim().replace(/\/$/, '');
+  const claims = ['roles'];
+
+  if (namespace.length > 0) {
+    claims.unshift(namespace);
+  }
+
+  return claims;
+}
 
 export type AuthConfig = {
   domain: string;
   clientId: string;
   clientSecret: string;
+  apiAudience: string;
 };
 
 export function readEnv(key: string): string {
@@ -27,11 +37,17 @@ export function readEnv(key: string): string {
   return value;
 }
 
+export function readOptionalEnv(key: string): string {
+  const runtimeEnv = cfEnv as Record<string, string | undefined>;
+  return runtimeEnv[key] ?? (import.meta.env as Record<string, string | undefined>)[key] ?? '';
+}
+
 export function getAuthConfig(): AuthConfig {
   return {
     domain: readEnv('AUTH0_DOMAIN'),
     clientId: readEnv('AUTH0_CLIENT_ID'),
     clientSecret: readEnv('AUTH0_CLIENT_SECRET'),
+    apiAudience: readEnv('AUTH0_API_AUDIENCE'),
   };
 }
 
@@ -45,11 +61,36 @@ export function getStateCookieName(): string {
   return STATE_COOKIE;
 }
 
-export async function exchangeCodeForIdToken(params: {
+export function getCookieDomainForHost(hostname: string): string | undefined {
+  const normalized = hostname.trim().toLowerCase();
+  const baseDomain = readOptionalEnv('COOKIE_BASE_DOMAIN').trim().toLowerCase().replace(/^\./, '');
+
+  if (!normalized || normalized === 'localhost') {
+    return undefined;
+  }
+
+  // Avoid setting Domain for IP/unknown hosts; host-only cookies are safer there.
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(normalized)) {
+    return undefined;
+  }
+
+  if (baseDomain && (normalized === baseDomain || normalized.endsWith(`.${baseDomain}`))) {
+    return `.${baseDomain}`;
+  }
+
+  return undefined;
+}
+
+export function getCookieDeleteOptionsForHost(hostname: string): Array<{ path: '/'; domain?: string }> {
+  const cookieDomain = getCookieDomainForHost(hostname);
+  return cookieDomain ? [{ path: '/' }, { path: '/', domain: cookieDomain }] : [{ path: '/' }];
+}
+
+export async function exchangeCodeForTokens(params: {
   code: string;
   redirectUri: string;
   config: AuthConfig;
-}): Promise<string> {
+}): Promise<{ idToken: string; accessToken: string }> {
   const { code, redirectUri, config } = params;
   const tokenEndpoint = `https://${config.domain}/oauth/token`;
 
@@ -72,12 +113,19 @@ export async function exchangeCodeForIdToken(params: {
     throw new Error(`Auth0 token exchange failed: ${response.status} ${text}`);
   }
 
-  const tokenResponse = (await response.json()) as { id_token?: string };
+  const tokenResponse = (await response.json()) as { id_token?: string; access_token?: string };
   if (!tokenResponse.id_token) {
     throw new Error('Auth0 token exchange did not return id_token');
   }
 
-  return tokenResponse.id_token;
+  if (!tokenResponse.access_token) {
+    throw new Error('Auth0 token exchange did not return access_token');
+  }
+
+  return {
+    idToken: tokenResponse.id_token,
+    accessToken: tokenResponse.access_token,
+  };
 }
 
 export async function verifyIdToken(idToken: string, config: AuthConfig): Promise<JWTPayload> {
@@ -114,7 +162,7 @@ function decodeAuth0ClientSecret(secret: string): Uint8Array {
 }
 
 export function hasAdminRole(payload: JWTPayload): boolean {
-  for (const claim of ROLE_CLAIMS) {
+  for (const claim of getRoleClaims()) {
     const value = payload[claim];
     if (Array.isArray(value) && value.some((r) => String(r).toLowerCase() === 'admin')) {
       return true;
@@ -124,9 +172,23 @@ export function hasAdminRole(payload: JWTPayload): boolean {
   return false;
 }
 
+export function hasEditorialRole(payload: JWTPayload): boolean {
+  const allowed = new Set(['admin', 'editor']);
+
+  for (const claim of getRoleClaims()) {
+    const value = payload[claim];
+    if (Array.isArray(value) && value.some((r) => allowed.has(String(r).toLowerCase()))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function getRoleClaimDebug(payload: JWTPayload): Record<string, unknown> {
+  const roleClaims = getRoleClaims();
   const roleClaimValues: Record<string, unknown> = {};
-  for (const claim of ROLE_CLAIMS) {
+  for (const claim of roleClaims) {
     roleClaimValues[claim] = payload[claim] ?? null;
   }
 
@@ -135,7 +197,7 @@ export function getRoleClaimDebug(payload: JWTPayload): Record<string, unknown> 
   );
 
   return {
-    configuredRoleClaims: ROLE_CLAIMS,
+    configuredRoleClaims: roleClaims,
     roleClaimValues,
     availableRoleLikeClaims,
     sub: payload.sub ?? null,

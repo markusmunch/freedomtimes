@@ -1,9 +1,32 @@
 cloudflare_account_id = "<cloudflare-account-id>"
 cloudflare_zone_id    = "<cloudflare-zone-id>"
-route_pattern         = "staging.freedomtimes.news/*"
+azure_location        = "uksouth"
+route_pattern         = "staging.example.com/*"
+
+# Auth0 app workspace URL for staging auth callbacks
+workspace_url = "https://staging.example.com"
+
+# CORS allowed origins for staging APIM
+api_management_allowed_origins = ["https://staging.example.com", "https://example.com"]
 
 worker_name     = "freedomtimes-holding-staging"
 holding_title   = "Freedom Times (Staging)"
 holding_heading = "Freedom Times"
 holding_message = "This is the staging environment."
 contact_email   = ""
+
+enable_editorial_easy_auth      = false
+enable_editorial_gateway_policy = true
+editorial_roles_claim           = "https://example.com/roles"
+editorial_allowed_roles         = ["admin", "editor"]
+api_management_sku_name         = "Consumption_0"
+api_management_api_path         = "editorial"
+api_custom_hostname             = "api-staging.example.com"
+
+# APIM custom hostname certificate (PFX) material for gateway TLS
+# Provide these via environment variables or secure workspace vars in CI/Terraform Cloud.
+# api_custom_hostname_certificate_base64 = "<base64-pfx>"
+# api_custom_hostname_certificate_password = "<pfx-password>"
+
+# Node.js version for Azure Functions
+node_version = "24"

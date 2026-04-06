@@ -257,7 +257,7 @@ Recommended split:
 
 ### 4.6 Auth0 — Authentication & RBAC
 
-Auth0 handles login for editors/admins and issues JWTs with custom role claims. The Admin UI requests a token from Auth0 (SPA flow or PKCE), then includes the Bearer token with every call to the Azure Function.
+Auth0 handles login for editors/admins and issues JWTs with custom role claims. The web app uses Authorization Code flow and stores tokens in secure cookies; browser JavaScript does not read bearer tokens directly.
 
 **Roles:**
 
@@ -267,6 +267,11 @@ Auth0 handles login for editors/admins and issues JWTs with custom role claims. 
 | `admin` | All editor permissions + delete stories + manage subscribers |
 
 The Cloudflare Worker also validates tokens for any protected admin routes served within the same origin (e.g., `/admin/*`). This allows the progressive Admin UI to be progressively revealed within the same Astro application without a separate admin domain.
+
+Consent and scope notes:
+
+- Login requests minimal identity scope (`openid`) plus the configured API audience for role/permission-aware API access.
+- First-party consent prompts are disabled on the Auth0 API resource server (`skip_consent_for_verifiable_first_party_clients = true`) so normal login does not require a separate consent click-through.
 
 **Discussion point:** Hosting the admin UI within the same Workers origin (progressive enhancement) vs a separate subdomain (`admin.freedomtimes.com`). The same-origin approach gives a single deployment artefact and avoids CORS issues between admin UI and API. The trade-off is that the Worker needs to handle JWT validation.
 
@@ -317,6 +322,47 @@ Use Terraform as the default because it can manage all three providers in one gr
 - Azure: resource group, storage, Functions, Cosmos DB, App Insights, Key Vault, role assignments.
 - Cloudflare: Workers routes, KV namespace bindings, R2 buckets, DNS, cache-related zone settings.
 - Auth0: tenant resources, applications, APIs, RBAC roles, role-to-permission mappings.
+
+---
+
+### 4.11 API Auth Pattern (Agreed)
+
+The agreed direction for editorial API authentication is:
+
+1. Astro issues an API access token into an HttpOnly cookie on the parent domain (for example `.freedomtimes.news`).
+2. Browser calls the API host on a subdomain (for example `api-staging.freedomtimes.news`) with `credentials: include`.
+3. APIM reads token from the cookie, sets `Authorization: Bearer <token>` for upstream, and enforces JWT + role policy.
+4. EasyAuth on Azure Function validates the upstream authorization header as a second gate.
+5. Function executes business logic only after gateway + EasyAuth checks pass.
+
+This keeps API tokens out of browser JavaScript while preserving gateway-level RBAC and Function-level token verification.
+
+#### Implementation checklist (status)
+
+Status is tracked for the agreed pattern above.
+
+- [x] APIM JWT validation and role claim enforcement.
+- [x] EasyAuth enabled on Azure Function.
+- [x] Astro issues API token as `HttpOnly` cookie (domain-scoped for subdomain API host).
+- [x] Browser calls API host with cookie credentials (`credentials: include`) and no JS bearer token.
+- [x] APIM policy extracts token from cookie and sets upstream `Authorization` header.
+- [x] APIM policy drops/overrides inbound client `Authorization` header.
+- [x] APIM credentialed CORS (`allow-credentials=true`, explicit origins, no wildcard).
+- [x] CSRF protection for state-changing endpoints in cookie-auth model.
+- [x] Custom API hostname on Freedom Times domain (for example `api-staging.freedomtimes.news`).
+
+Current state:
+
+- Cookie -> APIM header bridge -> EasyAuth path is now implemented in application and APIM policy code.
+- APIM custom hostnames are wired for staging (`api-staging.freedomtimes.news`) and production (`api.freedomtimes.news`), with certificate inputs required at deploy time.
+
+#### Required controls for this pattern
+
+- Cookie settings: `HttpOnly`, `Secure`, explicit `Domain`, explicit `Path`, short `Max-Age`.
+- CORS with credentials on APIM: explicit allowed origins (no wildcard), `Access-Control-Allow-Credentials: true`.
+- CSRF controls for cookie-authenticated API calls.
+- APIM should overwrite or drop any inbound client `Authorization` header before setting upstream auth header from cookie token.
+- Function direct hostname access should be treated as non-public and restricted over time.
 
 This gives one plan/apply workflow, explicit dependencies, and auditable change history for the whole platform.
 

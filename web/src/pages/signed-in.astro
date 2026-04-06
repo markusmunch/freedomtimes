@@ -1,34 +1,183 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { SESSION_COOKIE, getAuthConfig, getDisplayName, hasAdminRole, verifyIdToken } from '../lib/auth';
+import { ACCESS_TOKEN_COOKIE, CSRF_COOKIE, SESSION_COOKIE, getAuthConfig, getCookieDeleteOptionsForHost, getDisplayName, getRoleClaimDebug, hasEditorialRole, readOptionalEnv, verifyIdToken } from '../lib/auth';
+
+function readCookieValuesFromHeader(cookieHeader: string, name: string): string[] {
+  const prefix = `${name}=`;
+
+  return cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part.startsWith(prefix))
+    .map((part) => part.slice(prefix.length))
+    .filter((value) => value.length > 0);
+}
 
 const token = Astro.cookies.get(SESSION_COOKIE)?.value;
+const requestId = Astro.request.headers.get('cf-ray') ?? crypto.randomUUID();
 if (!token) {
+  console.warn('[signed-in] missing session cookie', { requestId });
   return Astro.redirect('/');
 }
 
+const deleteOptionsList = getCookieDeleteOptionsForHost(Astro.url.hostname);
+const rawCookieHeader = Astro.request.headers.get('cookie') ?? '';
+const sessionCookieValues = readCookieValuesFromHeader(rawCookieHeader, SESSION_COOKIE);
+
+if (sessionCookieValues.length > 1) {
+  const uniqueSessionCookieCount = new Set(sessionCookieValues).size;
+  console.warn('[signed-in] duplicate session cookies detected; forcing clean login', {
+    requestId,
+    duplicateCount: sessionCookieValues.length,
+    uniqueCount: uniqueSessionCookieCount,
+  });
+
+  for (const deleteOptions of deleteOptionsList) {
+    Astro.cookies.delete(SESSION_COOKIE, deleteOptions);
+    Astro.cookies.delete(ACCESS_TOKEN_COOKIE, deleteOptions);
+    Astro.cookies.delete(CSRF_COOKIE, deleteOptions);
+  }
+
+  return Astro.redirect('/auth/login');
+}
+
 let name = '';
+const editorialApiBaseUrl = readOptionalEnv('API_BASE_URL');
 
 try {
+
   const payload = await verifyIdToken(token, getAuthConfig());
-  if (!hasAdminRole(payload)) {
-    Astro.cookies.delete(SESSION_COOKIE, { path: '/' });
+  if (!hasEditorialRole(payload)) {
+    console.warn('[signed-in] token verified but role check failed', {
+      requestId,
+      sessionToken: token,
+      decodedPayload: payload,
+      roleDebug: getRoleClaimDebug(payload),
+    });
+    for (const deleteOptions of deleteOptionsList) {
+      Astro.cookies.delete(SESSION_COOKIE, deleteOptions);
+    }
     return Astro.redirect('/');
   }
 
   name = getDisplayName(payload);
-} catch {
-  Astro.cookies.delete(SESSION_COOKIE, { path: '/' });
+  console.info('[signed-in] token verified and page render allowed', {
+    requestId,
+    sessionCookieLength: token.length,
+  });
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const isExpired = message.includes('"exp" claim timestamp check failed');
+
+  console.warn('[signed-in] token verification failed', {
+    requestId,
+    sessionCookieLength: token.length,
+    error: message,
+    isExpired,
+  });
+
+  for (const deleteOptions of deleteOptionsList) {
+    Astro.cookies.delete(SESSION_COOKIE, deleteOptions);
+    Astro.cookies.delete(ACCESS_TOKEN_COOKIE, deleteOptions);
+    Astro.cookies.delete(CSRF_COOKIE, deleteOptions);
+  }
+
+  if (isExpired) {
+    return Astro.redirect('/auth/login');
+  }
+
   return Astro.redirect('/');
 }
+// Log AUTH0_DOMAIN at runtime for debugging
+  try {
+    const authConfig = getAuthConfig();
+    console.log('[signed-in] AUTH0_DOMAIN at runtime:', authConfig.domain);
+  } catch (e) {
+    console.error('[signed-in] AUTH0_DOMAIN missing or error:', e);
+  }
 ---
 
 <Layout>
   <section class="card">
     <h1>Signed in!</h1>
     <p class="lead">Welcome, {name}.</p>
+    <p class="hint">API test uses cookie-based auth through APIM. No bearer token is read in browser JavaScript.</p>
+
+    <div class="tester">
+      <label for="endpoint">API endpoint path</label>
+      <input id="endpoint" type="text" value="/stories" />
+      <button id="test-api" class="button" type="button">Test API (Cookie Auth)</button>
+      <pre id="api-result" aria-live="polite">Waiting for test request...</pre>
+    </div>
+
     <a class="button" href="/auth/logout">Log out</a>
   </section>
+
+  <script is:inline define:vars={{ editorialApiBaseUrl }}>
+    const baseUrl = editorialApiBaseUrl;
+    const endpointInput = document.getElementById('endpoint');
+    const testButton = document.getElementById('test-api');
+    const resultEl = document.getElementById('api-result');
+
+    function readCookie(name) {
+      const prefix = `${name}=`;
+      const cookie = document.cookie
+        .split(';')
+        .map((c) => c.trim())
+        .find((c) => c.startsWith(prefix));
+      return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : '';
+    }
+
+    function createCorrelationId() {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+      }
+
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    async function testApi() {
+      if (!baseUrl) {
+        resultEl.textContent = 'API_BASE_URL is not configured in worker runtime vars.';
+        return;
+      }
+
+      const endpointPath = endpointInput.value.trim() || '/stories';
+      const normalizedPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
+      const url = `${baseUrl}${normalizedPath}`;
+      const correlationId = createCorrelationId();
+
+      resultEl.textContent = `Calling ${url}...\nCorrelation ID: ${correlationId}`;
+
+      try {
+        const csrfToken = readCookie('ft_csrf');
+        const headers = {
+          'X-Correlation-ID': correlationId,
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+        };
+
+        const response = await fetch(url, {
+          method: 'GET',
+          credentials: 'include',
+          headers,
+        });
+
+        const bodyText = await response.text();
+        const responseCorrelationId = response.headers.get('X-Correlation-ID') || correlationId;
+        if (response.status === 404) {
+          resultEl.textContent = `Status: 404\nCorrelation ID: ${responseCorrelationId}\n\nEndpoint not found at this path. Try a documented route such as /stories or /stories/search.`;
+          return;
+        }
+
+        resultEl.textContent = `Status: ${response.status}\nCorrelation ID: ${responseCorrelationId}\n\n${bodyText}`;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        resultEl.textContent = `Request failed: ${message}`;
+      }
+    }
+
+    testButton?.addEventListener('click', testApi);
+  </script>
 </Layout>
 
 <style>
@@ -50,6 +199,45 @@ try {
   .lead {
     margin: 0.9rem 0 1.4rem;
     font-size: 1.05rem;
+  }
+
+  .hint {
+    margin: 0 0 1rem;
+    color: #7b1f1f;
+    font-size: 0.95rem;
+  }
+
+  .tester {
+    display: grid;
+    gap: 0.6rem;
+    margin-bottom: 1.2rem;
+    text-align: left;
+  }
+
+  label {
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+
+  input {
+    border: 1px solid #c6bfae;
+    border-radius: 8px;
+    padding: 0.6rem 0.7rem;
+    font-size: 0.95rem;
+  }
+
+  pre {
+    margin: 0;
+    min-height: 88px;
+    max-height: 220px;
+    overflow: auto;
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: #f7f4ec;
+    border: 1px solid #ddd5c4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85rem;
   }
 
   .button {

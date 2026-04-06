@@ -14,6 +14,105 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
+variable "azure_location" {
+  description = "Azure region for editorial API resources"
+  type        = string
+  default     = "uksouth"
+}
+
+variable "enable_editorial_gateway_policy" {
+  description = "Enable APIM gateway JWT/role policy for staging editorial API"
+  type        = bool
+  default     = true
+}
+
+variable "workspace_url" {
+  description = "Workspace URL for staging auth callbacks"
+  type        = string
+  default     = "https://staging.freedomtimes.news"
+}
+
+variable "auth0_api_identifier" {
+  description = "Auth0 API identifier (audience) for staging"
+  type        = string
+  default     = "https://api-staging.freedomtimes.news"
+}
+
+variable "apim_function_key" {
+  description = "Optional APIM-to-Function host key injected in a follow-up apply"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "api_management_allowed_origins" {
+  description = "Allowed browser origins for staging APIM CORS policy"
+  type        = list(string)
+  default     = ["https://staging.freedomtimes.news", "https://freedomtimes.news"]
+}
+
+variable "editorial_roles_claim" {
+  description = "JWT claim name that carries editorial roles"
+  type        = string
+  default     = "https://freedomtimes.news/roles"
+}
+
+variable "editorial_allowed_roles" {
+  description = "Allowed roles for staging editorial API"
+  type        = list(string)
+  default     = ["admin", "editor"]
+}
+
+variable "api_management_publisher_name" {
+  description = "Publisher name required by API Management"
+  type        = string
+  default     = "Freedom Times"
+}
+
+variable "api_management_publisher_email" {
+  description = "Publisher email required by API Management"
+  type        = string
+  default     = "platform@freedomtimes.news"
+}
+
+variable "api_management_sku_name" {
+  description = "API Management SKU name"
+  type        = string
+  default     = "Consumption_0"
+}
+
+variable "api_management_api_path" {
+  description = "Public APIM path segment for editorial API"
+  type        = string
+  default     = "editorial"
+}
+
+variable "api_custom_hostname" {
+  description = "Custom API hostname for staging APIM gateway"
+  type        = string
+  default     = "api-staging.freedomtimes.news"
+}
+
+variable "api_custom_hostname_proxied" {
+  description = "Whether Cloudflare should proxy the staging API custom hostname CNAME"
+  type        = bool
+  default     = false
+}
+
+variable "api_custom_hostname_certificate_base64" {
+  description = "Base64-encoded PFX certificate for staging custom API hostname"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "api_custom_hostname_certificate_password" {
+  description = "Certificate password for staging custom API hostname"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "worker_name" {
   description = "Worker name for the holding page"
   type        = string
@@ -73,14 +172,14 @@ variable "auth0_domain" {
   sensitive   = true
 }
 
-variable "auth0_client_id" {
-  description = "Auth0 Management API client ID"
+variable "auth0_management_client_id" {
+  description = "Auth0 Management API client ID (used by Terraform provider only, never output to app)"
   type        = string
   sensitive   = true
 }
 
-variable "auth0_client_secret" {
-  description = "Auth0 Management API client secret"
+variable "auth0_management_client_secret" {
+  description = "Auth0 Management API client secret (used by Terraform provider only, never output to app)"
   type        = string
   sensitive   = true
 }

@@ -1,9 +1,11 @@
 locals {
   base_urls = distinct(concat([var.workspace_url], var.extra_workspace_urls))
+  create_api_resource_server = var.create_shared_resources || var.create_api_resource_server
 }
 
 # Auth0 Client (Regular Web App for server-side code exchange)
 resource "auth0_client" "admin_ui" {
+  count           = var.create_login_app ? 1 : 0
   name            = var.app_name
   app_type        = "regular_web"
 
@@ -16,6 +18,7 @@ resource "auth0_client" "admin_ui" {
   is_first_party       = true
 
   jwt_configuration {
+    alg                 = var.jwt_signing_alg
     lifetime_in_seconds = 3600
     secret_encoded      = true
   }
@@ -23,20 +26,36 @@ resource "auth0_client" "admin_ui" {
 
 # Configure the app to use client_secret_post authentication.
 resource "auth0_client_credentials" "admin_ui" {
-  client_id             = auth0_client.admin_ui.id
+  count                 = var.create_login_app ? 1 : 0
+  client_id             = auth0_client.admin_ui[0].id
   authentication_method = "client_secret_post"
+}
+
+# Grant the client access to the API with consent skipped for first-party clients
+resource "auth0_client_grant" "admin_ui_api_access" {
+  count             = var.create_login_app ? 1 : 0
+  client_id         = auth0_client.admin_ui[0].id
+  audience          = var.api_identifier
+  scopes            = []
+
+  # Fresh tenants can return 404 until the API resource server is fully materialized.
+  depends_on = [
+    auth0_resource_server.api,
+    auth0_resource_server_scopes.api_scopes
+  ]
 }
 
 # Auth0 Resource Server (API) — tenant-wide, production only
 resource "auth0_resource_server" "api" {
-  count      = var.create_shared_resources ? 1 : 0
+  count      = local.create_api_resource_server ? 1 : 0
   identifier = var.api_identifier
-  name       = "freedomtimes-api"
+  name       = var.api_name
+  skip_consent_for_verifiable_first_party_clients = true
 }
 
 # Define scopes for the API
 resource "auth0_resource_server_scopes" "api_scopes" {
-  count                      = var.create_shared_resources ? 1 : 0
+  count                      = local.create_api_resource_server ? 1 : 0
   resource_server_identifier = auth0_resource_server.api[0].identifier
 
   scopes {
@@ -132,7 +151,7 @@ resource "auth0_action" "add_roles_to_token" {
     * @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
     */
     exports.onExecutePostLogin = async (event, api) => {
-      const namespace = 'https://freedomtimes.news';
+      const namespace = '${trimsuffix(var.roles_claim_namespace, "/")}';
       if (event.authorization) {
         api.idToken.setCustomClaim(`$${namespace}/roles`, event.authorization.roles);
         api.accessToken.setCustomClaim(`$${namespace}/roles`, event.authorization.roles);

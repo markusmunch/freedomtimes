@@ -11,8 +11,8 @@ locals {
   })
 
   # Extract hostname and determine if it's a subdomain
-  # e.g. "staging.freedomtimes.news/*" → hostname "staging.freedomtimes.news", is_subdomain true
-  # e.g. "freedomtimes.news/*" → hostname "freedomtimes.news", is_subdomain false
+  # e.g. "staging.example.com/*" -> hostname "staging.example.com", is_subdomain true
+  # e.g. "example.com/*" -> hostname "example.com", is_subdomain false
   route_hostname = split("/", var.route_pattern)[0]
   is_subdomain   = length(split(".", local.route_hostname)) > 2
 }
@@ -22,6 +22,14 @@ resource "cloudflare_workers_script" "holding_page" {
   name       = var.worker_name
   content    = local.worker_script
   logpush    = true
+
+  # Wrangler owns deployed Worker bundle content; Terraform manages routing/domain bindings.
+  lifecycle {
+    ignore_changes = [
+      content,
+      plain_text_binding,
+    ]
+  }
 }
 
 resource "cloudflare_workers_secret" "script_secrets" {

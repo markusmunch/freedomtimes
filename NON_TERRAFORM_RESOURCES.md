@@ -17,8 +17,8 @@ Auth0 resources are managed by Terraform **except** for the two M2M applications
 This app authenticates the Terraform Auth0 provider to the Auth0 Management API. It allows Terraform to create and manage Auth0 resources (clients, roles, actions, resource servers, etc.).
 
 **Corresponds to `.env.dev` vars:**
-- `TF_VAR_auth0_client_id`
-- `TF_VAR_auth0_client_secret`
+- `TF_VAR_auth0_management_client_id`
+- `TF_VAR_auth0_management_client_secret`
 
 #### Steps
 
@@ -40,8 +40,8 @@ This app authenticates the Terraform Auth0 provider to the Auth0 Management API.
 
 7. Click **Authorize**
 8. Go to the **Settings** tab of the new application
-9. Copy **Client ID** → set as `TF_VAR_auth0_client_id` in `.env.dev`
-10. Copy **Client Secret** → set as `TF_VAR_auth0_client_secret` in `.env.dev`
+9. Copy **Client ID** → set as `TF_VAR_auth0_management_client_id` in `.env.dev`
+10. Copy **Client Secret** → set as `TF_VAR_auth0_management_client_secret` in `.env.dev`
 11. Run `.\scripts\set-github-secrets.ps1` to push updated values to GitHub Actions
 
 ---
@@ -58,4 +58,126 @@ Once the Terraform provider M2M app is created and credentials are set:
 
 ## Why These Cannot Be in Terraform
 
-The Auth0 Terraform provider uses client credentials from `TF_VAR_auth0_client_id` / `TF_VAR_auth0_client_secret` to authenticate against the Management API. Those credentials must already exist and be authorized before Terraform can run — so they cannot be resources that Terraform itself creates.
+The Auth0 Terraform provider uses client credentials from `TF_VAR_auth0_management_client_id` / `TF_VAR_auth0_management_client_secret` to authenticate against the Management API. Those credentials must already exist and be authorized before Terraform can run — so they cannot be resources that Terraform itself creates.
+
+---
+
+## Azure
+
+Azure resources for the editorial API are managed by Terraform, but the Azure credentials used by the `azurerm` Terraform provider must be created manually first.
+
+---
+
+### 2. `freedomtimes-terraform` — Azure Service Principal
+
+This service principal authenticates the Terraform `azurerm` provider so Terraform can create and manage:
+
+- Resource Groups
+- Storage Accounts
+- Function Apps
+- Cosmos DB accounts, databases, and containers
+
+**Corresponds to `.env.dev` vars:**
+- `ARM_CLIENT_ID`
+- `ARM_CLIENT_SECRET`
+- `ARM_SUBSCRIPTION_ID`
+- `ARM_TENANT_ID`
+- `TF_VAR_azure_location`
+
+#### Steps
+
+1. Open Azure Cloud Shell or a terminal with Azure CLI installed
+2. Get the current subscription and tenant IDs:
+
+   ```bash
+   az account show --query "{subscriptionId:id, tenantId:tenantId, name:name}" -o table
+   ```
+
+3. Create a service principal for Terraform at subscription scope:
+
+   ```bash
+   az ad sp create-for-rbac \
+     --name "freedomtimes-terraform" \
+     --role Contributor \
+     --scopes /subscriptions/<SUBSCRIPTION_ID>
+   ```
+
+4. Copy values from the command output:
+   - `appId` -> `ARM_CLIENT_ID`
+   - `password` -> `ARM_CLIENT_SECRET`
+   - `tenant` -> `ARM_TENANT_ID`
+   - Subscription ID from step 2 -> `ARM_SUBSCRIPTION_ID`
+5. Set `TF_VAR_azure_location` in `.env.dev` (recommended: `uksouth`)
+6. Run `./scripts/set-github-secrets.ps1` to push updated Azure credentials and variables to GitHub Actions
+
+#### Notes
+
+- `password` is only shown once when the service principal is created. Save it immediately.
+- `Contributor` is acceptable for bootstrap speed. If needed later, replace with a more restrictive role model once required Azure permissions are fully known.
+
+---
+
+## After Azure Credentials Are Created
+
+Once the Azure service principal is created and credentials are set:
+
+1. Update `.env.dev` with `ARM_*` values and `TF_VAR_azure_location`
+2. Run `./scripts/set-github-secrets.ps1`
+3. Terraform will be able to provision Azure resources on the next apply
+
+---
+
+## Why These Cannot Be in Terraform
+
+The Azure Terraform provider (`azurerm`) needs pre-existing credentials to authenticate against Azure Resource Manager. Those credentials must already exist before Terraform can create any Azure resources, so the service principal bootstrap cannot itself be created by the same Terraform configuration it is intended to authorize.
+
+---
+
+## APIM Custom Domain Certificate (Cloudflare)
+
+Azure API Management (APIM) custom domains require a certificate to be provided outside of Terraform. For staging and production, we use a Cloudflare-managed certificate for the custom API hostname (e.g., `api-staging.freedomtimes.news`).
+
+**This process must be completed manually whenever a new certificate is issued or rotated.**
+
+### Steps
+
+1. **Export Cloudflare Certificate as PFX**
+    - In the Cloudflare dashboard, go to **SSL/TLS → Origin Server**.
+    - Download the certificate and private key (PEM format) for the custom hostname.
+    - On your local machine, combine the certificate and private key into a PFX file:
+       ```
+       openssl pkcs12 -export -out cert.pfx -inkey privkey.pem -in cert.pem -certfile chain.pem
+       ```
+       - Use `chain.pem` if Cloudflare provides a CA bundle/intermediate; otherwise, omit `-certfile`.
+
+2. **Base64-Encode the PFX**
+    - On Windows PowerShell:
+       ```
+       [Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx")) > cert.pfx.b64.txt
+       ```
+    - On macOS/Linux:
+       ```
+       base64 cert.pfx > cert.pfx.b64.txt
+       ```
+
+3. **Add as GitHub Actions Secrets**
+    - Go to your GitHub repo → Settings → Secrets and variables → Actions.
+    - Add two new secrets:
+       - `API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64` (contents of `cert.pfx.b64.txt`)
+       - `API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD` (the password you set when exporting the PFX)
+
+4. **Wire Secrets into Terraform Workflow**
+    - In your GitHub Actions workflow for staging/production, set these as environment variables or pass as Terraform variables:
+       ```yaml
+       - name: Terraform Apply
+          env:
+             TF_VAR_api_custom_hostname_certificate_base64: ${{ secrets.API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64 }}
+             TF_VAR_api_custom_hostname_certificate_password: ${{ secrets.API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD }}
+          run: terraform apply -auto-approve
+       ```
+
+5. **Re-run the Terraform Workflow**
+    - Trigger the workflow in GitHub Actions.
+    - Terraform will provision the APIM custom domain and Cloudflare DNS record using your Cloudflare certificate.
+
+**Note:** This process must be repeated whenever the certificate is renewed or replaced.

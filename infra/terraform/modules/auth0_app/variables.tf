@@ -9,6 +9,18 @@ variable "create_shared_resources" {
   default     = true
 }
 
+variable "create_api_resource_server" {
+  description = "Whether to create the Auth0 API resource server and scopes for this audience."
+  type        = bool
+  default     = false
+}
+
+variable "create_login_app" {
+  description = "Whether to create the Auth0 regular web application and credentials."
+  type        = bool
+  default     = true
+}
+
 variable "app_name" {
   description = "Auth0 application name"
   type        = string
@@ -16,19 +28,34 @@ variable "app_name" {
 }
 
 variable "api_identifier" {
-  description = "Auth0 API identifier (e.g., https://api.freedomtimes.news)"
+  description = "Auth0 API identifier (audience)"
   type        = string
-  default     = "https://api.freedomtimes.news"
+}
+
+variable "api_name" {
+  description = "Auth0 API resource server name"
+  type        = string
+  default     = "freedomtimes-api"
 }
 
 variable "workspace_url" {
   description = "Workspace URL for admin application callback"
   type        = string
-  default     = "https://freedomtimes.news"
+}
+
+variable "roles_claim_namespace" {
+  description = "Namespace prefix for custom role claims (without /roles suffix)"
+  type        = string
 }
 
 variable "extra_workspace_urls" {
   description = "Additional workspace base URLs to allow for callbacks/logout/origins (e.g., staging)"
   type        = list(string)
   default     = []
+}
+
+variable "jwt_signing_alg" {
+  description = "JWT signing algorithm for Auth0 application tokens"
+  type        = string
+  default     = "HS256"
 }
