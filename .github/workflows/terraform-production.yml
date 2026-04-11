@@ -383,7 +383,8 @@ jobs:
 
           echo "[web-deps] node=$(node -v) npm=$(npm -v)"
           echo "[web-deps] pwd=$(pwd)"
-          echo "[web-deps] package typescript=$(node -p \"require('./package.json').devDependencies?.typescript || ''\")"
+          TYPESCRIPT_VERSION=$(node -e 'const p=require("./package.json"); process.stdout.write((p.devDependencies && p.devDependencies.typescript) || "")')
+          echo "[web-deps] package typescript=${TYPESCRIPT_VERSION}"
 
           if ! npm ci; then
             echo "[web-deps] npm ci failed; attempting npm install fallback"
