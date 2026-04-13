@@ -44,3 +44,4 @@ web/android/**/.cxx/
 .vscode/mcp.json
 request-headers
 secrets/*
+agents/uk-and-europe-cults-columnist/reports/*.html
