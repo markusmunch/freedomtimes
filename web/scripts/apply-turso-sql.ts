@@ -3,40 +3,33 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+type DatabaseTarget = 'scheduler' | 'subscriptions';
 type Mode = 'migrate' | 'seed';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
-  console.log('Usage: tsx scripts/apply-scheduler-sql.ts <migrate|seed>');
+  console.log('Usage: tsx scripts/apply-turso-sql.ts <scheduler|subscriptions> <migrate|seed>');
   process.exit(0);
 }
 
-const mode = process.argv[2] as Mode | undefined;
+const databaseTarget = process.argv[2] as DatabaseTarget | undefined;
+const mode = process.argv[3] as Mode | undefined;
 
-if (mode !== 'migrate' && mode !== 'seed') {
-  throw new Error('Usage: tsx scripts/apply-scheduler-sql.ts <migrate|seed>');
+if (!isDatabaseTarget(databaseTarget) || (mode !== 'migrate' && mode !== 'seed')) {
+  throw new Error('Usage: tsx scripts/apply-turso-sql.ts <scheduler|subscriptions> <migrate|seed>');
 }
-
-const schedulerUrl = getRequiredEnv([
-  'TURSO_SCHEDULER_DATABASE_URL',
-  'TURSO_STAGING_SCHEDULER_DB_URL',
-]);
-const schedulerAuthToken = getRequiredEnv([
-  'TURSO_SCHEDULER_AUTH_TOKEN',
-  'TURSO_STAGING_SCHEDULER_DB_TOKEN',
-]);
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(currentDir, '..', '..');
 const sqlDir = path.join(
   repoRoot,
   'infra',
-  'scheduler-database',
+  `${databaseTarget}-database`,
   mode === 'migrate' ? 'migrations' : 'seeds',
 );
 
 const client = createClient({
-  url: schedulerUrl,
-  authToken: schedulerAuthToken,
+  url: getRequiredEnv(getUrlEnvNames(databaseTarget)),
+  authToken: getRequiredEnv(getAuthTokenEnvNames(databaseTarget)),
 });
 
 try {
@@ -53,10 +46,26 @@ try {
       await client.execute(statement);
     }
 
-    console.log(`[scheduler-db] applied ${mode} file ${fileName}`);
+    console.log(`[${databaseTarget}-db] applied ${mode} file ${fileName}`);
   }
 } finally {
   client.close();
+}
+
+function isDatabaseTarget(value: string | undefined): value is DatabaseTarget {
+  return value === 'scheduler' || value === 'subscriptions';
+}
+
+function getUrlEnvNames(databaseTarget: DatabaseTarget): string[] {
+  return databaseTarget === 'scheduler'
+    ? ['TURSO_SCHEDULER_DATABASE_URL', 'TURSO_STAGING_SCHEDULER_DB_URL']
+    : ['TURSO_SUBSCRIPTIONS_DATABASE_URL', 'TURSO_STAGING_SUBSCRIPTIONS_DB_URL'];
+}
+
+function getAuthTokenEnvNames(databaseTarget: DatabaseTarget): string[] {
+  return databaseTarget === 'scheduler'
+    ? ['TURSO_SCHEDULER_AUTH_TOKEN', 'TURSO_STAGING_SCHEDULER_DB_TOKEN']
+    : ['TURSO_SUBSCRIPTIONS_AUTH_TOKEN', 'TURSO_STAGING_SUBSCRIPTIONS_DB_TOKEN'];
 }
 
 function getRequiredEnv(names: string[]): string {

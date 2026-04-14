@@ -257,6 +257,8 @@ jobs:
           TURSO_AUTH_TOKEN=$(terraform output -raw turso_database_auth_token 2>/dev/null || echo "")
           SCHEDULER_TURSO_DATABASE_URL=$(terraform output -raw scheduler_turso_database_url 2>/dev/null || echo "")
           SCHEDULER_TURSO_AUTH_TOKEN=$(terraform output -raw scheduler_turso_database_auth_token 2>/dev/null || echo "")
+          SUBSCRIPTIONS_TURSO_DATABASE_URL=$(terraform output -raw subscriptions_turso_database_url 2>/dev/null || echo "")
+          SUBSCRIPTIONS_TURSO_AUTH_TOKEN=$(terraform output -raw subscriptions_turso_database_auth_token 2>/dev/null || echo "")
 
           echo "auth0_app_client_id=$AUTH0_APP_CLIENT_ID" >> $GITHUB_OUTPUT
           echo "api_base_url=$API_BASE_URL" >> $GITHUB_OUTPUT
@@ -268,6 +270,9 @@ jobs:
           echo "scheduler_turso_database_url=$SCHEDULER_TURSO_DATABASE_URL" >> $GITHUB_OUTPUT
           echo "::add-mask::$SCHEDULER_TURSO_AUTH_TOKEN"
           echo "scheduler_turso_auth_token=$SCHEDULER_TURSO_AUTH_TOKEN" >> $GITHUB_OUTPUT
+          echo "subscriptions_turso_database_url=$SUBSCRIPTIONS_TURSO_DATABASE_URL" >> $GITHUB_OUTPUT
+          echo "::add-mask::$SUBSCRIPTIONS_TURSO_AUTH_TOKEN"
+          echo "subscriptions_turso_auth_token=$SUBSCRIPTIONS_TURSO_AUTH_TOKEN" >> $GITHUB_OUTPUT
 
       - name: Fetch Auth0 App Secret
         id: auth0_app_secret
@@ -422,6 +427,27 @@ jobs:
           fi
 
           npm run scheduler:db:deploy
+
+      - name: Apply Subscriptions Database Migration and Seed
+        if: steps.tf_outputs.outputs.subscriptions_turso_database_url != '' && steps.tf_outputs.outputs.subscriptions_turso_database_url != 'null'
+        working-directory: web
+        env:
+          TURSO_SUBSCRIPTIONS_DATABASE_URL: ${{ steps.tf_outputs.outputs.subscriptions_turso_database_url }}
+          TURSO_SUBSCRIPTIONS_AUTH_TOKEN: ${{ steps.tf_outputs.outputs.subscriptions_turso_auth_token }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TURSO_SUBSCRIPTIONS_DATABASE_URL}" ]; then
+            echo "ERROR: TURSO_SUBSCRIPTIONS_DATABASE_URL is required but empty from Terraform outputs"
+            exit 1
+          fi
+
+          if [ -z "${TURSO_SUBSCRIPTIONS_AUTH_TOKEN}" ]; then
+            echo "ERROR: TURSO_SUBSCRIPTIONS_AUTH_TOKEN is required but empty from Terraform outputs"
+            exit 1
+          fi
+
+          npm run subscriptions:db:deploy
 
       - name: Build Astro Worker
         working-directory: web

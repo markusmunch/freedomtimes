@@ -330,3 +330,18 @@ cd scheduler-worker
 npx wrangler secret put TURSO_SCHEDULER_DATABASE_URL --config wrangler.jsonc --env staging
 npx wrangler secret put TURSO_SCHEDULER_AUTH_TOKEN --config wrangler.jsonc --env staging
 ```
+
+## Turso SQL Migrations
+
+Database schema deployment for non-EmDash Turso workloads runs from the `web/` project with shared tooling.
+
+- Scheduler SQL lives in `infra/scheduler-database/migrations` and `infra/scheduler-database/seeds`.
+- Subscriptions SQL lives in `infra/subscriptions-database/migrations` and `infra/subscriptions-database/seeds`.
+
+Manual staging examples:
+
+```powershell
+cd web
+npm run scheduler:db:deploy
+npm run subscriptions:db:deploy
+```
