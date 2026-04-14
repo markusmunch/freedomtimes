@@ -9,6 +9,10 @@ import '../styles/global.css';
 		<meta name="viewport" content="width=device-width" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<link rel="icon" href="/favicon.ico" />
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<meta name="theme-color" content="#1d4b3e" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="Freedom Times" />
 		<meta name="generator" content={Astro.generator} />
 		<title>Freedom Times</title>
 	</head>
@@ -18,8 +22,10 @@ import '../styles/global.css';
 		</main>
 		<script>
 			import { initializeNativeAuthBridge } from '../lib/native-auth-bridge';
+			import { initializePwa } from '../lib/pwa';
 
 			void initializeNativeAuthBridge();
+			void initializePwa();
 		</script>
 	</body>
 </html>

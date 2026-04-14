@@ -7,9 +7,10 @@
   },
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build && tsx scripts/patch-cloudflare-bundle.ts",
+    "build": "tsx scripts/build-service-worker.ts && astro build && tsx scripts/patch-cloudflare-bundle.ts",
     "preview": "astro preview",
     "astro": "astro",
+    "build:service-worker": "tsx scripts/build-service-worker.ts",
     "cap:doctor": "cap doctor",
     "cap:add:android": "cap add android",
     "cap:add:ios": "cap add ios",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.3.0",
+    "esbuild": "^0.25.3",
     "tsx": "^4.20.6",
     "typescript": "^6.0.2"
   }
