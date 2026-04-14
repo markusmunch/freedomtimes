@@ -160,6 +160,35 @@ GitHub Actions validates both native shells on macOS so the spike does not depen
 - Android validation installs Java and Android SDK packages, syncs Capacitor, and runs `assembleDebug`.
 - iOS validation syncs Capacitor and runs an unsigned simulator build with `xcodebuild`.
 
+### Signed iOS Archive Export
+
+The iOS workflow also supports a manually dispatched signed archive/export path on GitHub-hosted macOS runners.
+
+Workflow:
+
+- `.github/workflows/capacitor-ios.yml`
+- dispatch with `signed_export=true`
+- choose `export_method` as `development`, `ad-hoc`, or `app-store`
+
+Required GitHub secrets:
+
+- `IOS_CERTIFICATE_P12_BASE64`: base64-encoded signing certificate `.p12`
+- `IOS_CERTIFICATE_PASSWORD`: password for the `.p12`
+- `IOS_PROVISIONING_PROFILE_BASE64`: base64-encoded `.mobileprovision`
+- `IOS_TEAM_ID`: Apple Developer Team ID
+
+Output artifact:
+
+- `capacitor-ios-signed-export-<method>`
+
+That artifact includes:
+
+- exported `.ipa`
+- `.xcarchive`
+- generated `ExportOptions.plist`
+
+This path is intended for Mac-based install/signing validation. It is separate from the unsigned simulator artifact.
+
 ## Routes
 
 - `/` holding page
