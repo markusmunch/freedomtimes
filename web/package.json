@@ -9,11 +9,21 @@
     "dev": "astro dev",
     "build": "astro build && tsx scripts/patch-cloudflare-bundle.ts",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "cap:doctor": "cap doctor",
+    "cap:add:android": "cap add android",
+    "cap:add:ios": "cap add ios",
+    "cap:sync:android": "cap sync android",
+    "cap:sync:ios": "cap sync ios",
+    "cap:open:android": "cap open android",
+    "cap:open:ios": "cap open ios"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^13.1.8",
     "@astrojs/react": "^5.0.3",
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
+    "@capacitor/ios": "^8.3.0",
     "@emdash-cms/cloudflare": "^0.1.1",
     "@libsql/client": "^0.17.2",
     "@libsql/kysely-libsql": "^0.4.1",
@@ -24,6 +34,7 @@
     "react-dom": "^19.2.5"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.3.0",
     "tsx": "^4.20.6",
     "typescript": "^6.0.2"
   }

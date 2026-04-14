@@ -55,6 +55,81 @@ Run all commands from `web/`:
 - `npm run build`
 - `npm run preview`
 
+## Capacitor Spike
+
+Capacitor is installed in `web/` because the mobile spike wraps this Astro app directly.
+
+This site currently runs as a Cloudflare Worker SSR app, not a static export. That means Capacitor should point at a live URL instead of trying to package the Worker runtime into the native shell.
+
+A minimal placeholder web bundle is checked in for Capacitor sync operations. Runtime traffic still targets the configured live URL.
+
+Default behavior:
+
+- `CAPACITOR_SERVER_URL` defaults to `https://staging.freedomtimes.news`
+- local emulator/device testing can override it to a local HTTP URL
+
+Examples:
+
+```powershell
+cd web
+$env:CAPACITOR_SERVER_URL = "https://staging.freedomtimes.news"
+npm run cap:doctor
+```
+
+```powershell
+cd web
+$env:CAPACITOR_SERVER_URL = "http://10.0.2.2:4321"
+npm run cap:doctor
+```
+
+Available spike commands:
+
+- `npm run cap:doctor`
+- `npm run cap:add:android`
+- `npm run cap:add:ios`
+- `npm run cap:sync:android`
+- `npm run cap:sync:ios`
+- `npm run cap:open:android`
+- `npm run cap:open:ios`
+
+Notes:
+
+- Android can be spiked from Windows if the Android SDK and tooling are installed.
+- iOS is currently parked for this spike. The repo is only carrying the Capacitor Android shell and shared Capacitor config for now.
+- Because this is a live-URL wrapper spike, changing the Worker deployment remains the source of truth for app content and auth behavior.
+
+### Local Android Build
+
+The Android shell is validated by syncing Capacitor and building `assembleDebug` from `web/android`.
+
+Requirements:
+
+- `JAVA_HOME` must point at a working JDK.
+- `ANDROID_HOME` or `ANDROID_SDK_ROOT` must point at a writable Android SDK location.
+- Prefer a user-scoped SDK over a protected install under `Program Files`, because Gradle may need to install or update SDK components.
+
+Example PowerShell flow:
+
+```powershell
+cd web
+$env:JAVA_HOME = "C:\path\to\jdk"
+$env:ANDROID_HOME = "C:\path\to\android-sdk"
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+$env:PATH = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:PATH"
+npm run cap:sync:android
+cd android
+.\gradlew.bat assembleDebug
+```
+
+Validated locally in this spike:
+
+- JDK from Android install: `C:\Program Files\Android\openjdk\jdk-21.0.8`
+- Writable SDK: `C:\Users\jonbr\.bubblewrap\android_sdk`
+
+### GitHub Validation
+
+GitHub Actions validates the Capacitor Android shell on macOS so the build does not depend on one workstation's local setup. The workflow installs Java, provisions Android SDK packages, syncs Capacitor, and runs `assembleDebug`.
+
 ## Routes
 
 - `/` holding page
