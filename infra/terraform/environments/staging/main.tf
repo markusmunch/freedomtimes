@@ -79,6 +79,7 @@ module "auth0_app" {
   api_identifier          = var.auth0_api_identifier
   api_name                = "freedomtimes-api-staging"
   workspace_url           = var.workspace_url
+  extra_callback_urls     = var.auth0_extra_callback_urls
   roles_claim_namespace   = trimsuffix(replace(var.editorial_roles_claim, "/roles", ""), "/")
   app_name                = "freedomtimes-admin-staging"
   create_shared_resources = false

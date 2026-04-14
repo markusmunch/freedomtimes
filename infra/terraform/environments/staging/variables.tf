@@ -87,6 +87,12 @@ variable "workspace_url" {
   default     = "https://staging.freedomtimes.news"
 }
 
+variable "auth0_extra_callback_urls" {
+  description = "Additional Auth0 callback URLs for staging, such as native mobile deep links"
+  type        = list(string)
+  default     = ["news.freedomtimes.app://auth/callback"]
+}
+
 variable "auth0_api_identifier" {
   description = "Auth0 API identifier (audience) for staging"
   type        = string
