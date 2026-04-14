@@ -45,6 +45,13 @@ function Main {
             $stagingPushPublicKey = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_SUBSCRIBE_PUBLIC_KEY") -ErrorMessage "Missing PUSH_STAGING_SUBSCRIBE_PUBLIC_KEY for staging Worker secret sync."
             $stagingPushPrivateKey = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_VAPID_PRIVATE_KEY") -ErrorMessage "Missing PUSH_STAGING_VAPID_PRIVATE_KEY for staging scheduler Worker secret sync."
             $stagingPushSubject = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_VAPID_SUBJECT") -ErrorMessage "Missing PUSH_STAGING_VAPID_SUBJECT for staging scheduler Worker secret sync."
+            $stagingAndroidFcmProjectId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_ANDROID_FCM_PROJECT_ID") -ErrorMessage "Missing PUSH_STAGING_ANDROID_FCM_PROJECT_ID for staging scheduler Worker secret sync."
+            $stagingAndroidFcmClientEmail = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_ANDROID_FCM_CLIENT_EMAIL") -ErrorMessage "Missing PUSH_STAGING_ANDROID_FCM_CLIENT_EMAIL for staging scheduler Worker secret sync."
+            $stagingAndroidFcmPrivateKey = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_ANDROID_FCM_PRIVATE_KEY") -ErrorMessage "Missing PUSH_STAGING_ANDROID_FCM_PRIVATE_KEY for staging scheduler Worker secret sync."
+            $stagingIosApnsTeamId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_TEAM_ID") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_TEAM_ID for staging scheduler Worker secret sync."
+            $stagingIosApnsKeyId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_KEY_ID") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_KEY_ID for staging scheduler Worker secret sync."
+            $stagingIosApnsPrivateKey = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_PRIVATE_KEY") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_PRIVATE_KEY for staging scheduler Worker secret sync."
+            $stagingIosApnsBundleId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_BUNDLE_ID") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_BUNDLE_ID for staging scheduler Worker secret sync."
             Write-Host "[DEBUG] Will set AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, EMDASH_AUTH_SECRET, EMDASH_PREVIEW_SECRET for staging" -ForegroundColor Yellow
             Set-WorkerSecret -ConfigPath $stagingWranglerConfig -Name "AUTH0_DOMAIN" -Value $stagingAuth0Domain -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $stagingWranglerConfig -Name "AUTH0_CLIENT_ID" -Value $stagingClientId -WhatIfOnly:$DryRun
@@ -61,6 +68,13 @@ function Main {
             Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_VAPID_PUBLIC_KEY" -Value $stagingPushPublicKey -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_VAPID_PRIVATE_KEY" -Value $stagingPushPrivateKey -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_VAPID_SUBJECT" -Value $stagingPushSubject -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PROJECT_ID" -Value $stagingAndroidFcmProjectId -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_CLIENT_EMAIL" -Value $stagingAndroidFcmClientEmail -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PRIVATE_KEY" -Value $stagingAndroidFcmPrivateKey -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_TEAM_ID" -Value $stagingIosApnsTeamId -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_KEY_ID" -Value $stagingIosApnsKeyId -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_PRIVATE_KEY" -Value $stagingIosApnsPrivateKey -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_BUNDLE_ID" -Value $stagingIosApnsBundleId -WhatIfOnly:$DryRun
         }
         elseif ($Target -eq "Production") {
             Write-Host "\nSyncing Cloudflare Worker secrets for PRODUCTION..." -ForegroundColor Red
@@ -73,6 +87,13 @@ function Main {
             $productionPushPublicKey = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_SUBSCRIBE_PUBLIC_KEY")
             $productionPushPrivateKey = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_VAPID_PRIVATE_KEY")
             $productionPushSubject = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_VAPID_SUBJECT")
+            $productionAndroidFcmProjectId = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_ANDROID_FCM_PROJECT_ID")
+            $productionAndroidFcmClientEmail = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_ANDROID_FCM_CLIENT_EMAIL")
+            $productionAndroidFcmPrivateKey = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_ANDROID_FCM_PRIVATE_KEY")
+            $productionIosApnsTeamId = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_IOS_APNS_TEAM_ID")
+            $productionIosApnsKeyId = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_IOS_APNS_KEY_ID")
+            $productionIosApnsPrivateKey = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_IOS_APNS_PRIVATE_KEY")
+            $productionIosApnsBundleId = Get-EnvValue -Values $productionEnvValues -Keys @("PUSH_PRODUCTION_IOS_APNS_BUNDLE_ID")
             $productionSubscriptionsDbUrl = Get-EnvValue -Values $productionEnvValues -Keys @("TURSO_PRODUCTION_SUBSCRIPTIONS_DB_URL")
             $productionSubscriptionsDbToken = Get-EnvValue -Values $productionEnvValues -Keys @("TURSO_PRODUCTION_SUBSCRIPTIONS_DB_TOKEN")
             $productionSchedulerDbUrl = Get-EnvValue -Values $productionEnvValues -Keys @("TURSO_PRODUCTION_SCHEDULER_DB_URL")
@@ -91,6 +112,13 @@ function Main {
             Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_VAPID_PUBLIC_KEY" -Value $productionPushPublicKey -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_VAPID_PRIVATE_KEY" -Value $productionPushPrivateKey -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_VAPID_SUBJECT" -Value $productionPushSubject -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PROJECT_ID" -Value $productionAndroidFcmProjectId -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_CLIENT_EMAIL" -Value $productionAndroidFcmClientEmail -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PRIVATE_KEY" -Value $productionAndroidFcmPrivateKey -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_TEAM_ID" -Value $productionIosApnsTeamId -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_KEY_ID" -Value $productionIosApnsKeyId -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_PRIVATE_KEY" -Value $productionIosApnsPrivateKey -WhatIfOnly:$DryRun
+            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_BUNDLE_ID" -Value $productionIosApnsBundleId -WhatIfOnly:$DryRun
         }
     }
 
@@ -132,11 +160,25 @@ function Main {
             "PUSH_STAGING_SUBSCRIBE_PUBLIC_KEY",
             "PUSH_STAGING_VAPID_PRIVATE_KEY",
             "PUSH_STAGING_VAPID_SUBJECT",
+            "PUSH_STAGING_ANDROID_FCM_PROJECT_ID",
+            "PUSH_STAGING_ANDROID_FCM_CLIENT_EMAIL",
+            "PUSH_STAGING_ANDROID_FCM_PRIVATE_KEY",
+            "PUSH_STAGING_IOS_APNS_TEAM_ID",
+            "PUSH_STAGING_IOS_APNS_KEY_ID",
+            "PUSH_STAGING_IOS_APNS_PRIVATE_KEY",
+            "PUSH_STAGING_IOS_APNS_BUNDLE_ID",
             "EMDASH_AUTH_SECRET_PRODUCTION",
             "EMDASH_PREVIEW_SECRET_PRODUCTION",
             "PUSH_PRODUCTION_SUBSCRIBE_PUBLIC_KEY",
             "PUSH_PRODUCTION_VAPID_PRIVATE_KEY",
-            "PUSH_PRODUCTION_VAPID_SUBJECT"
+            "PUSH_PRODUCTION_VAPID_SUBJECT",
+            "PUSH_PRODUCTION_ANDROID_FCM_PROJECT_ID",
+            "PUSH_PRODUCTION_ANDROID_FCM_CLIENT_EMAIL",
+            "PUSH_PRODUCTION_ANDROID_FCM_PRIVATE_KEY",
+            "PUSH_PRODUCTION_IOS_APNS_TEAM_ID",
+            "PUSH_PRODUCTION_IOS_APNS_KEY_ID",
+            "PUSH_PRODUCTION_IOS_APNS_PRIVATE_KEY",
+            "PUSH_PRODUCTION_IOS_APNS_BUNDLE_ID"
         )
         Write-Host "  Syncing secrets..." -ForegroundColor Gray
         foreach ($name in $secrets) {

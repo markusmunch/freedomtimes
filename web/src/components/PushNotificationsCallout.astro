@@ -9,7 +9,7 @@ const pushSubscribePublicKey = getPushSubscribePublicKey();
 		<p class="eyebrow">Reader Alerts</p>
 		<h2 id="notifications-heading">Get notified when major stories land</h2>
 		<p id="notification-status" class="notification-copy">
-			Enable browser notifications on this device to test PWA delivery from published EmDash content.
+			Enable notifications on this device to receive published Freedom Times alerts.
 		</p>
 	</div>
 	<button
@@ -24,82 +24,44 @@ const pushSubscribePublicKey = getPushSubscribePublicKey();
 </section>
 
 <script>
+	import {
+		enableNotificationsForCurrentDevice,
+		getNotificationSupportState,
+		initializeNativePushBridge,
+	} from '../lib/device-notifications';
+
 	const button = document.querySelector('#notifications-enable');
 	const status = document.querySelector('#notification-status');
 
 	if (button instanceof HTMLButtonElement && status instanceof HTMLParagraphElement) {
-		const configured = button.dataset.configured === 'true';
-
-		if (!configured) {
-			button.disabled = true;
-			status.textContent = 'Notifications are waiting on the staging VAPID public key.';
-		} else if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-			button.disabled = true;
-			status.textContent = 'This browser does not support web push notifications.';
-		} else if (Notification.permission === 'granted') {
-			status.textContent = 'Notifications are already enabled in this browser.';
-		}
+		void initializeNativePushBridge();
+		void applyInitialState(button, status);
 
 		button.addEventListener('click', () => {
 			void subscribeToNotifications(button, status);
 		});
 	}
 
-	async function subscribeToNotifications(button, status) {
-		button.disabled = true;
-		status.textContent = 'Requesting notification permission...';
-
-		try {
-			const permission = await Notification.requestPermission();
-			if (permission !== 'granted') {
-				status.textContent = permission === 'denied'
-					? 'Notifications were blocked in the browser.'
-					: 'Notification permission was dismissed.';
-				button.disabled = false;
-				return;
-			}
-
-			status.textContent = 'Registering this device for push notifications...';
-			const registration = await navigator.serviceWorker.ready;
-			const existingSubscription = await registration.pushManager.getSubscription();
-			const publicKey = decodeBase64Url(button.dataset.publicKey || '');
-
-			const subscription = existingSubscription ?? await registration.pushManager.subscribe({
-				userVisibleOnly: true,
-				applicationServerKey: publicKey,
-			});
-
-			const response = await fetch('/api/push-subscriptions', {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-				},
-				body: JSON.stringify(subscription.toJSON()),
-			});
-
-			if (!response.ok) {
-				throw new Error(`Subscription save failed with status ${response.status}`);
-			}
-
-			status.textContent = 'Notifications enabled for this browser.';
-		} catch (error) {
-			console.error('[notifications] subscribe failed', error);
-			status.textContent = 'Notification setup failed. Check the console and try again.';
-			button.disabled = false;
-		}
+	async function applyInitialState(button: HTMLButtonElement, status: HTMLParagraphElement) {
+		const state = await getNotificationSupportState(button.dataset.publicKey || '');
+		button.disabled = state.buttonDisabled;
+		status.textContent = state.message;
 	}
 
-	function decodeBase64Url(value) {
-		const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-		const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-		const raw = atob(padded);
-		const bytes = new Uint8Array(raw.length);
+	async function subscribeToNotifications(button: HTMLButtonElement, status: HTMLParagraphElement) {
+		button.disabled = true;
+		status.textContent = 'Configuring notifications for this device...';
 
-		for (let index = 0; index < raw.length; index += 1) {
-			bytes[index] = raw.charCodeAt(index);
+		try {
+			status.textContent = 'Registering this device for notifications...';
+			status.textContent = await enableNotificationsForCurrentDevice(button.dataset.publicKey || '');
+		} catch (error) {
+			console.error('[notifications] subscribe failed', error);
+			status.textContent = error instanceof Error
+				? error.message
+				: 'Notification setup failed. Check the console and try again.';
+			button.disabled = false;
 		}
-
-		return bytes;
 	}
 </script>
 

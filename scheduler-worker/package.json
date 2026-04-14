@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",
+    "jose": "^6.2.2",
     "webpush-webcrypto": "^1.0.5"
   }
 }

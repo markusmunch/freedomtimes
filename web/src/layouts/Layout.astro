@@ -22,9 +22,11 @@ import '../styles/global.css';
 		</main>
 		<script>
 			import { initializeNativeAuthBridge } from '../lib/native-auth-bridge';
+			import { initializeNativePushBridge } from '../lib/device-notifications';
 			import { initializePwa } from '../lib/pwa';
 
 			void initializeNativeAuthBridge();
+			void initializeNativePushBridge();
 			void initializePwa();
 		</script>
 	</body>

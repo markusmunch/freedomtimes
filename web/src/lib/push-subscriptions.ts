@@ -1,13 +1,20 @@
 import { createClient } from '@libsql/client/web';
 import { readEnv, readOptionalEnv } from './auth';
 
-export type PushSubscriptionRecord = {
+export type WebPushSubscriptionRecord = {
   endpoint: string;
   keys: {
     p256dh: string;
     auth: string;
   };
 };
+
+export type NativePushSubscriptionRecord = {
+  platform: 'android' | 'ios';
+  token: string;
+};
+
+export type PushSubscriptionRecord = WebPushSubscriptionRecord | NativePushSubscriptionRecord;
 
 export type PushSubscriptionInsert = {
   subscription: PushSubscriptionRecord;
@@ -25,7 +32,8 @@ export async function upsertPushSubscription(input: PushSubscriptionInsert): Pro
 
   try {
     const now = new Date().toISOString();
-    const subscriptionJson = JSON.stringify(input.subscription);
+    const endpoint = getStoredEndpoint(input.subscription);
+    const subscriptionJson = JSON.stringify(normalizeStoredSubscription(input.subscription));
 
     await client.execute({
       sql: `
@@ -49,7 +57,7 @@ export async function upsertPushSubscription(input: PushSubscriptionInsert): Pro
           last_failure_at = NULL,
           last_failure_reason = NULL
       `,
-      args: [crypto.randomUUID(), input.subscription.endpoint, subscriptionJson, input.locale, input.userAgent, now],
+      args: [crypto.randomUUID(), endpoint, subscriptionJson, input.locale, input.userAgent, now],
     });
   } finally {
     client.close();
@@ -62,6 +70,12 @@ export function readPushSubscriptionRequest(body: unknown): PushSubscriptionReco
   }
 
   const candidate = body as Record<string, unknown>;
+  const nativeSubscription = readNativePushSubscription(candidate);
+
+  if (nativeSubscription) {
+    return nativeSubscription;
+  }
+
   const endpoint = typeof candidate.endpoint === 'string' ? candidate.endpoint.trim() : '';
   const keys = candidate.keys;
 
@@ -92,6 +106,45 @@ function createSubscriptionsClient() {
     authToken: readEnv('TURSO_SUBSCRIPTIONS_AUTH_TOKEN'),
     fetch: createWorkerSafeFetch(),
   });
+}
+
+function readNativePushSubscription(candidate: Record<string, unknown>): NativePushSubscriptionRecord | null {
+  const platform = candidate.platform;
+  const token = typeof candidate.token === 'string' ? candidate.token.trim() : '';
+
+  if ((platform === 'android' || platform === 'ios') && token.length > 0) {
+    return {
+      platform,
+      token,
+    };
+  }
+
+  return null;
+}
+
+function normalizeStoredSubscription(subscription: PushSubscriptionRecord): Record<string, unknown> {
+  if (isNativePushSubscription(subscription)) {
+    return {
+      platform: subscription.platform,
+      token: subscription.token,
+    };
+  }
+
+  return {
+    platform: 'web',
+    endpoint: subscription.endpoint,
+    keys: subscription.keys,
+  };
+}
+
+function getStoredEndpoint(subscription: PushSubscriptionRecord): string {
+  return isNativePushSubscription(subscription)
+    ? `${subscription.platform}:${subscription.token}`
+    : subscription.endpoint;
+}
+
+function isNativePushSubscription(subscription: PushSubscriptionRecord): subscription is NativePushSubscriptionRecord {
+  return 'platform' in subscription && 'token' in subscription;
 }
 
 function createWorkerSafeFetch():

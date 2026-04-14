@@ -1,4 +1,5 @@
 import { createClient } from '@libsql/client';
+import { importPKCS8, SignJWT } from 'jose';
 import { ApplicationServerKeys, generatePushHTTPRequest } from 'webpush-webcrypto';
 
 type Env = {
@@ -9,6 +10,15 @@ type Env = {
   PUSH_VAPID_PUBLIC_KEY?: string;
   PUSH_VAPID_PRIVATE_KEY?: string;
   PUSH_VAPID_SUBJECT?: string;
+  PUSH_ANDROID_FCM_PROJECT_ID?: string;
+  PUSH_ANDROID_FCM_CLIENT_EMAIL?: string;
+  PUSH_ANDROID_FCM_PRIVATE_KEY?: string;
+  PUSH_ANDROID_FCM_CHANNEL_ID?: string;
+  PUSH_IOS_APNS_TEAM_ID?: string;
+  PUSH_IOS_APNS_KEY_ID?: string;
+  PUSH_IOS_APNS_PRIVATE_KEY?: string;
+  PUSH_IOS_APNS_BUNDLE_ID?: string;
+  PUSH_IOS_APNS_HOST?: string;
   NOTIFICATION_DEFAULT_TITLE?: string;
   NOTIFICATION_DEFAULT_URL?: string;
 };
@@ -28,12 +38,25 @@ type StoredPushSubscription = {
 };
 
 type PushTarget = {
+  platform: 'web';
   endpoint: string;
   keys: {
     p256dh: string;
     auth: string;
   };
 };
+
+type AndroidPushTarget = {
+  platform: 'android';
+  token: string;
+};
+
+type IosPushTarget = {
+  platform: 'ios';
+  token: string;
+};
+
+type StoredNotificationTarget = PushTarget | AndroidPushTarget | IosPushTarget;
 
 type PushNotificationPayload = {
   title: string;
@@ -46,8 +69,39 @@ type PushNotificationPayload = {
   urgency: 'very-low' | 'low' | 'normal' | 'high';
 };
 
+type DeliveryResult = {
+  ok: boolean;
+  deactivate: boolean;
+  reason?: string;
+};
+
+type WebPushConfig = {
+  publicKey: string;
+  privateKey: string;
+  subject: string;
+};
+
+type AndroidPushConfig = {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+  channelId: string;
+};
+
+type IosPushConfig = {
+  teamId: string;
+  keyId: string;
+  privateKey: string;
+  bundleId: string;
+  host: string;
+};
+
 const MAX_JOBS_PER_TICK = 25;
 const MAX_SUBSCRIPTIONS_PER_JOB = 500;
+const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
+const FCM_TOKEN_AUDIENCE = 'https://oauth2.googleapis.com/token';
+const DEFAULT_ANDROID_CHANNEL_ID = 'reader-alerts';
+const DEFAULT_IOS_APNS_HOST = 'api.push.apple.com';
 
 export default {
   async fetch(): Promise<Response> {
@@ -148,23 +202,17 @@ async function deliverNotification(
     throw new Error('TURSO_SUBSCRIPTIONS_DATABASE_URL and TURSO_SUBSCRIPTIONS_AUTH_TOKEN are required');
   }
 
-  const vapidPublicKey = env.PUSH_VAPID_PUBLIC_KEY?.trim();
-  const vapidPrivateKey = env.PUSH_VAPID_PRIVATE_KEY?.trim();
-  const vapidSubject = env.PUSH_VAPID_SUBJECT?.trim();
-
-  if (!vapidPublicKey || !vapidPrivateKey || !vapidSubject) {
-    throw new Error('PUSH_VAPID_PUBLIC_KEY, PUSH_VAPID_PRIVATE_KEY, and PUSH_VAPID_SUBJECT are required');
-  }
-
   const subscriptionsDb = createClient({ url: subscriptionsDatabaseUrl, authToken: subscriptionsAuthToken });
-  const applicationServerKeys = await ApplicationServerKeys.fromJSON({
-    publicKey: vapidPublicKey,
-    privateKey: vapidPrivateKey,
-  });
+  const webPushConfig = readWebPushConfig(env);
+  const androidPushConfig = readAndroidPushConfig(env);
+  const iosPushConfig = readIosPushConfig(env);
 
   let delivered = 0;
   let failed = 0;
   let deactivated = 0;
+  let applicationServerKeysPromise: Promise<ApplicationServerKeys> | null = null;
+  let googleAccessTokenPromise: Promise<string> | null = null;
+  let apnsTokenPromise: Promise<string> | null = null;
 
   try {
     const result = await subscriptionsDb.execute({
@@ -195,40 +243,50 @@ async function deliverNotification(
       }
 
       try {
-        const request = await generatePushHTTPRequest({
-          applicationServerKeys,
-          payload: JSON.stringify(payload),
+        const deliveryResult = await deliverToStoredTarget({
           target,
-          adminContact: vapidSubject,
-          ttl: payload.ttl,
-          urgency: payload.urgency,
-          topic: payload.tag,
+          payload,
+          webPushConfig,
+          androidPushConfig,
+          iosPushConfig,
+          getApplicationServerKeys: () => {
+            if (!applicationServerKeysPromise) {
+              applicationServerKeysPromise = createApplicationServerKeys(webPushConfig);
+            }
+
+            return applicationServerKeysPromise;
+          },
+          getGoogleAccessToken: () => {
+            if (!googleAccessTokenPromise) {
+              googleAccessTokenPromise = createGoogleAccessToken(androidPushConfig);
+            }
+
+            return googleAccessTokenPromise;
+          },
+          getApnsToken: () => {
+            if (!apnsTokenPromise) {
+              apnsTokenPromise = createApnsToken(iosPushConfig);
+            }
+
+            return apnsTokenPromise;
+          },
         });
 
-        const response = await fetch(request.endpoint, {
-          method: 'POST',
-          headers: request.headers,
-          body: request.body,
-        });
-
-        if (response.ok) {
+        if (deliveryResult.ok) {
           delivered += 1;
           await markSubscriptionSuccess(subscriptionsDb, stored.id);
           continue;
         }
 
         failed += 1;
-        const deactivate = response.status === 404 || response.status === 410;
-        if (deactivate) {
+        if (deliveryResult.deactivate) {
           deactivated += 1;
         }
-
-        const responseText = await safeReadResponseText(response);
         await markSubscriptionFailure(
           subscriptionsDb,
           stored.id,
-          `Push service responded ${response.status}${responseText ? `: ${responseText}` : ''}`,
-          deactivate,
+          deliveryResult.reason ?? 'Push delivery failed',
+          deliveryResult.deactivate,
         );
       } catch (error) {
         failed += 1;
@@ -274,9 +332,23 @@ function parsePayload(rawPayload: string): Record<string, unknown> {
   return {};
 }
 
-function parseStoredTarget(rawSubscription: string): PushTarget | null {
+function parseStoredTarget(rawSubscription: string): StoredNotificationTarget | null {
   try {
     const parsed = JSON.parse(rawSubscription) as Record<string, unknown>;
+    const platform = parsed.platform;
+
+    if (platform === 'android' || platform === 'ios') {
+      const token = typeof parsed.token === 'string' ? parsed.token.trim() : '';
+      if (!token) {
+        return null;
+      }
+
+      return {
+        platform,
+        token,
+      };
+    }
+
     const endpoint = typeof parsed.endpoint === 'string' ? parsed.endpoint.trim() : '';
     const keys = parsed.keys;
 
@@ -293,6 +365,7 @@ function parseStoredTarget(rawSubscription: string): PushTarget | null {
     }
 
     return {
+      platform: 'web',
       endpoint,
       keys: { p256dh, auth },
     };
@@ -337,6 +410,302 @@ function readUrgency(value: unknown): PushNotificationPayload['urgency'] {
   return value === 'very-low' || value === 'low' || value === 'normal' || value === 'high'
     ? value
     : 'high';
+}
+
+async function deliverToStoredTarget(params: {
+  target: StoredNotificationTarget;
+  payload: PushNotificationPayload;
+  webPushConfig: WebPushConfig | null;
+  androidPushConfig: AndroidPushConfig | null;
+  iosPushConfig: IosPushConfig | null;
+  getApplicationServerKeys: () => Promise<ApplicationServerKeys>;
+  getGoogleAccessToken: () => Promise<string>;
+  getApnsToken: () => Promise<string>;
+}): Promise<DeliveryResult> {
+  const {
+    target,
+    payload,
+    webPushConfig,
+    androidPushConfig,
+    iosPushConfig,
+    getApplicationServerKeys,
+    getGoogleAccessToken,
+    getApnsToken,
+  } = params;
+
+  switch (target.platform) {
+    case 'web':
+      return sendWebPushNotification(target, payload, webPushConfig, getApplicationServerKeys);
+    case 'android':
+      return sendAndroidPushNotification(target, payload, androidPushConfig, getGoogleAccessToken);
+    case 'ios':
+      return sendIosPushNotification(target, payload, iosPushConfig, getApnsToken);
+  }
+}
+
+async function sendWebPushNotification(
+  target: PushTarget,
+  payload: PushNotificationPayload,
+  config: WebPushConfig | null,
+  getApplicationServerKeys: () => Promise<ApplicationServerKeys>,
+): Promise<DeliveryResult> {
+  if (!config) {
+    return {
+      ok: false,
+      deactivate: false,
+      reason: 'Web push delivery is not configured',
+    };
+  }
+
+  const request = await generatePushHTTPRequest({
+    applicationServerKeys: await getApplicationServerKeys(),
+    payload: JSON.stringify(payload),
+    target,
+    adminContact: config.subject,
+    ttl: payload.ttl,
+    urgency: payload.urgency,
+    topic: payload.tag,
+  });
+
+  const response = await fetch(request.endpoint, {
+    method: 'POST',
+    headers: request.headers,
+    body: request.body,
+  });
+
+  if (response.ok) {
+    return { ok: true, deactivate: false };
+  }
+
+  const responseText = await safeReadResponseText(response);
+  return {
+    ok: false,
+    deactivate: response.status === 404 || response.status === 410,
+    reason: `Web push responded ${response.status}${responseText ? `: ${responseText}` : ''}`,
+  };
+}
+
+async function sendAndroidPushNotification(
+  target: AndroidPushTarget,
+  payload: PushNotificationPayload,
+  config: AndroidPushConfig | null,
+  getGoogleAccessToken: () => Promise<string>,
+): Promise<DeliveryResult> {
+  if (!config) {
+    return {
+      ok: false,
+      deactivate: false,
+      reason: 'Android push delivery is not configured',
+    };
+  }
+
+  const response = await fetch(`https://fcm.googleapis.com/v1/projects/${config.projectId}/messages:send`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${await getGoogleAccessToken()}`,
+      'content-type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify({
+      message: {
+        token: target.token,
+        notification: {
+          title: payload.title,
+          body: payload.body,
+        },
+        data: {
+          url: payload.url,
+          icon: payload.icon,
+          badge: payload.badge,
+          tag: payload.tag,
+        },
+        android: {
+          priority: payload.urgency === 'high' ? 'HIGH' : 'NORMAL',
+          notification: {
+            channelId: config.channelId,
+            clickAction: 'FCM_PLUGIN_ACTIVITY',
+            tag: payload.tag,
+          },
+        },
+      },
+    }),
+  });
+
+  if (response.ok) {
+    return { ok: true, deactivate: false };
+  }
+
+  const responseText = await safeReadResponseText(response);
+  const deactivate = response.status === 404 || /UNREGISTERED|registration-token-not-registered/i.test(responseText);
+  return {
+    ok: false,
+    deactivate,
+    reason: `FCM responded ${response.status}${responseText ? `: ${responseText}` : ''}`,
+  };
+}
+
+async function sendIosPushNotification(
+  target: IosPushTarget,
+  payload: PushNotificationPayload,
+  config: IosPushConfig | null,
+  getApnsToken: () => Promise<string>,
+): Promise<DeliveryResult> {
+  if (!config) {
+    return {
+      ok: false,
+      deactivate: false,
+      reason: 'iOS push delivery is not configured',
+    };
+  }
+
+  const response = await fetch(`https://${config.host}/3/device/${target.token}`, {
+    method: 'POST',
+    headers: {
+      authorization: `bearer ${await getApnsToken()}`,
+      'apns-push-type': 'alert',
+      'apns-priority': '10',
+      'apns-topic': config.bundleId,
+      'content-type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify({
+      aps: {
+        alert: {
+          title: payload.title,
+          body: payload.body,
+        },
+        sound: 'default',
+        'thread-id': payload.tag,
+      },
+      url: payload.url,
+      icon: payload.icon,
+      badge: payload.badge,
+      tag: payload.tag,
+    }),
+  });
+
+  if (response.ok) {
+    return { ok: true, deactivate: false };
+  }
+
+  const responseText = await safeReadResponseText(response);
+  const deactivate = response.status === 410
+    || /BadDeviceToken|DeviceTokenNotForTopic|Unregistered/i.test(responseText);
+  return {
+    ok: false,
+    deactivate,
+    reason: `APNs responded ${response.status}${responseText ? `: ${responseText}` : ''}`,
+  };
+}
+
+async function createApplicationServerKeys(config: WebPushConfig | null): Promise<ApplicationServerKeys> {
+  if (!config) {
+    throw new Error('Web push delivery is not configured');
+  }
+
+  return ApplicationServerKeys.fromJSON({
+    publicKey: config.publicKey,
+    privateKey: config.privateKey,
+  });
+}
+
+async function createGoogleAccessToken(config: AndroidPushConfig | null): Promise<string> {
+  if (!config) {
+    throw new Error('Android push delivery is not configured');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const privateKey = await importPKCS8(normalizePrivateKey(config.privateKey), 'RS256');
+  const assertion = await new SignJWT({ scope: FCM_SCOPE })
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
+    .setIssuer(config.clientEmail)
+    .setSubject(config.clientEmail)
+    .setAudience(FCM_TOKEN_AUDIENCE)
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600)
+    .sign(privateKey);
+
+  const response = await fetch(FCM_TOKEN_AUDIENCE, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+  });
+
+  if (!response.ok) {
+    const responseText = await safeReadResponseText(response);
+    throw new Error(`Unable to obtain FCM access token (${response.status}${responseText ? `: ${responseText}` : ''})`);
+  }
+
+  const tokenResponse = await response.json() as { access_token?: string };
+  if (typeof tokenResponse.access_token !== 'string' || tokenResponse.access_token.trim().length === 0) {
+    throw new Error('FCM token response did not include access_token');
+  }
+
+  return tokenResponse.access_token.trim();
+}
+
+async function createApnsToken(config: IosPushConfig | null): Promise<string> {
+  if (!config) {
+    throw new Error('iOS push delivery is not configured');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const privateKey = await importPKCS8(normalizePrivateKey(config.privateKey), 'ES256');
+
+  return new SignJWT({})
+    .setProtectedHeader({ alg: 'ES256', kid: config.keyId })
+    .setIssuer(config.teamId)
+    .setIssuedAt(now)
+    .sign(privateKey);
+}
+
+function readWebPushConfig(env: Env): WebPushConfig | null {
+  const publicKey = env.PUSH_VAPID_PUBLIC_KEY?.trim() ?? '';
+  const privateKey = env.PUSH_VAPID_PRIVATE_KEY?.trim() ?? '';
+  const subject = env.PUSH_VAPID_SUBJECT?.trim() ?? '';
+
+  return publicKey && privateKey && subject
+    ? { publicKey, privateKey, subject }
+    : null;
+}
+
+function readAndroidPushConfig(env: Env): AndroidPushConfig | null {
+  const projectId = env.PUSH_ANDROID_FCM_PROJECT_ID?.trim() ?? '';
+  const clientEmail = env.PUSH_ANDROID_FCM_CLIENT_EMAIL?.trim() ?? '';
+  const privateKey = env.PUSH_ANDROID_FCM_PRIVATE_KEY?.trim() ?? '';
+
+  return projectId && clientEmail && privateKey
+    ? {
+        projectId,
+        clientEmail,
+        privateKey,
+        channelId: env.PUSH_ANDROID_FCM_CHANNEL_ID?.trim() || DEFAULT_ANDROID_CHANNEL_ID,
+      }
+    : null;
+}
+
+function readIosPushConfig(env: Env): IosPushConfig | null {
+  const teamId = env.PUSH_IOS_APNS_TEAM_ID?.trim() ?? '';
+  const keyId = env.PUSH_IOS_APNS_KEY_ID?.trim() ?? '';
+  const privateKey = env.PUSH_IOS_APNS_PRIVATE_KEY?.trim() ?? '';
+  const bundleId = env.PUSH_IOS_APNS_BUNDLE_ID?.trim() ?? '';
+
+  return teamId && keyId && privateKey && bundleId
+    ? {
+        teamId,
+        keyId,
+        privateKey,
+        bundleId,
+        host: env.PUSH_IOS_APNS_HOST?.trim() || DEFAULT_IOS_APNS_HOST,
+      }
+    : null;
+}
+
+function normalizePrivateKey(value: string): string {
+  return value.replace(/\\n/g, '\n').trim();
 }
 
 async function markSubscriptionSuccess(db: ReturnType<typeof createClient>, id: string): Promise<void> {
