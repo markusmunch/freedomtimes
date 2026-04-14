@@ -66,7 +66,7 @@ jobs:
       TF_VAR_turso_database_group: ${{ vars.TF_VAR_TURSO_DATABASE_GROUP_PRODUCTION }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -311,7 +311,7 @@ jobs:
         run: rm -f tfplan
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
