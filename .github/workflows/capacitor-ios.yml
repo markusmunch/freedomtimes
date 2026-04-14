@@ -1,0 +1,59 @@
+name: Capacitor iOS
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/capacitor-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios-build:
+    name: iOS Simulator Build
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: web
+
+    env:
+      CAPACITOR_SERVER_URL: https://staging.freedomtimes.news
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Web Dependencies
+        run: npm ci
+
+      - name: Sync Capacitor iOS
+        run: npm run cap:sync:ios
+
+      - name: Build iOS App for Simulator
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Upload iOS Simulator App
+        uses: actions/upload-artifact@v7
+        with:
+          name: capacitor-ios-simulator-app
+          path: web/ios/build/Build/Products/Debug-iphonesimulator/App.app
+          if-no-files-found: error
+          compression-level: 0

@@ -95,7 +95,7 @@ Available spike commands:
 Notes:
 
 - Android can be spiked from Windows if the Android SDK and tooling are installed.
-- iOS is currently parked for this spike. The repo is only carrying the Capacitor Android shell and shared Capacitor config for now.
+- iOS now has a Capacitor shell under `web/ios`, but local build validation still requires macOS with Xcode.
 - Because this is a live-URL wrapper spike, changing the Worker deployment remains the source of truth for app content and auth behavior.
 
 ### Local Android Build
@@ -126,9 +126,39 @@ Validated locally in this spike:
 - JDK from Android install: `C:\Program Files\Android\openjdk\jdk-21.0.8`
 - Writable SDK: `C:\Users\jonbr\.bubblewrap\android_sdk`
 
+### Local iOS Build
+
+The iOS shell is generated under `web/ios` and uses the same live-URL Capacitor configuration as Android.
+
+Requirements:
+
+- macOS with Xcode installed
+- Xcode command line tools available
+- A simulator build can run unsigned; a physical device build requires the usual Apple signing setup
+
+Example macOS flow:
+
+```sh
+cd web
+export CAPACITOR_SERVER_URL="https://staging.freedomtimes.news"
+npm run cap:sync:ios
+cd ios/App
+xcodebuild \
+  -project App.xcodeproj \
+  -scheme App \
+  -configuration Debug \
+  -sdk iphonesimulator \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+```
+
 ### GitHub Validation
 
-GitHub Actions validates the Capacitor Android shell on macOS so the build does not depend on one workstation's local setup. The workflow installs Java, provisions Android SDK packages, syncs Capacitor, and runs `assembleDebug`.
+GitHub Actions validates both native shells on macOS so the spike does not depend on one workstation's local setup.
+
+- Android validation installs Java and Android SDK packages, syncs Capacitor, and runs `assembleDebug`.
+- iOS validation syncs Capacitor and runs an unsigned simulator build with `xcodebuild`.
 
 ## Routes
 

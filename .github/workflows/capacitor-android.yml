@@ -57,3 +57,11 @@ jobs:
           chmod +x android/gradlew
           cd android
           ./gradlew assembleDebug
+
+      - name: Upload Android Debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: capacitor-android-debug-apk
+          path: web/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          compression-level: 0
