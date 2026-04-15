@@ -33,6 +33,7 @@ declare global {
 const registrationWaiters: RegistrationWaiter[] = [];
 let nativeRegistrationPromise: Promise<void> | null = null;
 let listenersAttached = false;
+let nativeAutoRegistrationPromise: Promise<void> | null = null;
 const nativeAppConfig = registerPlugin<NativeAppConfigPlugin>('NativeAppConfig');
 
 export async function getNotificationSupportState(publicKey: string): Promise<NotificationSupportState> {
@@ -114,6 +115,13 @@ export async function initializeNativePushBridge(): Promise<void> {
 
   await PushNotifications.addListener('registration', ({ value }) => {
     resolveRegistrationWaiters(value);
+
+    const platform = getNativePlatform();
+    if (platform) {
+      persistSubscription({ platform, token: value }).catch((error) => {
+        console.warn('[notifications] native subscription persist failed', error);
+      });
+    }
   });
 
   await PushNotifications.addListener('registrationError', (error) => {
@@ -132,6 +140,8 @@ export async function initializeNativePushBridge(): Promise<void> {
 
     window.location.assign(targetUrl);
   });
+
+  void ensureNativePushRegistration();
 }
 
 function isNativeNotificationPlatform(): boolean {
@@ -190,6 +200,47 @@ async function enableNativePushNotifications(): Promise<void> {
   });
 
   return nativeRegistrationPromise;
+}
+
+async function ensureNativePushRegistration(): Promise<void> {
+  if (nativeAutoRegistrationPromise) {
+    return nativeAutoRegistrationPromise;
+  }
+
+  nativeAutoRegistrationPromise = (async () => {
+    const platform = getNativePlatform();
+    if (!platform) {
+      return;
+    }
+
+    if (platform === 'android' && !(await isAndroidFirebaseConfigured())) {
+      return;
+    }
+
+    const permissions = await PushNotifications.checkPermissions();
+    if (permissions.receive !== 'granted') {
+      return;
+    }
+
+    if (platform === 'android') {
+      await PushNotifications.createChannel({
+        id: NATIVE_CHANNEL_ID,
+        name: NATIVE_CHANNEL_NAME,
+        description: NATIVE_CHANNEL_DESCRIPTION,
+        importance: 5,
+        visibility: 1,
+        vibration: true,
+      });
+    }
+
+    await PushNotifications.register();
+  })().catch((error) => {
+    console.warn('[notifications] native auto-registration skipped', error);
+  }).finally(() => {
+    nativeAutoRegistrationPromise = null;
+  });
+
+  return nativeAutoRegistrationPromise;
 }
 
 async function enableBrowserPushNotifications(publicKey: string): Promise<void> {
