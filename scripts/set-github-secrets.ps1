@@ -48,10 +48,10 @@ function Main {
             $stagingAndroidFcmProjectId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_ANDROID_FCM_PROJECT_ID") -ErrorMessage "Missing PUSH_STAGING_ANDROID_FCM_PROJECT_ID for staging scheduler Worker secret sync."
             $stagingAndroidFcmClientEmail = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_ANDROID_FCM_CLIENT_EMAIL") -ErrorMessage "Missing PUSH_STAGING_ANDROID_FCM_CLIENT_EMAIL for staging scheduler Worker secret sync."
             $stagingAndroidFcmPrivateKey = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_ANDROID_FCM_PRIVATE_KEY") -ErrorMessage "Missing PUSH_STAGING_ANDROID_FCM_PRIVATE_KEY for staging scheduler Worker secret sync."
-            $stagingIosApnsTeamId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_TEAM_ID") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_TEAM_ID for staging scheduler Worker secret sync."
-            $stagingIosApnsKeyId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_KEY_ID") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_KEY_ID for staging scheduler Worker secret sync."
-            $stagingIosApnsPrivateKey = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_PRIVATE_KEY") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_PRIVATE_KEY for staging scheduler Worker secret sync."
-            $stagingIosApnsBundleId = Get-EnvValueOrThrow -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_BUNDLE_ID") -ErrorMessage "Missing PUSH_STAGING_IOS_APNS_BUNDLE_ID for staging scheduler Worker secret sync."
+            $stagingIosApnsTeamId = Get-EnvValue -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_TEAM_ID")
+            $stagingIosApnsKeyId = Get-EnvValue -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_KEY_ID")
+            $stagingIosApnsPrivateKey = Get-EnvValue -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_PRIVATE_KEY")
+            $stagingIosApnsBundleId = Get-EnvValue -Values $stagingEnvValues -Keys @("PUSH_STAGING_IOS_APNS_BUNDLE_ID")
             Write-Host "[DEBUG] Will set AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, EMDASH_AUTH_SECRET, EMDASH_PREVIEW_SECRET for staging" -ForegroundColor Yellow
             Set-WorkerSecret -ConfigPath $stagingWranglerConfig -Name "AUTH0_DOMAIN" -Value $stagingAuth0Domain -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $stagingWranglerConfig -Name "AUTH0_CLIENT_ID" -Value $stagingClientId -WhatIfOnly:$DryRun
@@ -71,10 +71,12 @@ function Main {
             Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PROJECT_ID" -Value $stagingAndroidFcmProjectId -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_CLIENT_EMAIL" -Value $stagingAndroidFcmClientEmail -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PRIVATE_KEY" -Value $stagingAndroidFcmPrivateKey -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_TEAM_ID" -Value $stagingIosApnsTeamId -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_KEY_ID" -Value $stagingIosApnsKeyId -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_PRIVATE_KEY" -Value $stagingIosApnsPrivateKey -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_BUNDLE_ID" -Value $stagingIosApnsBundleId -WhatIfOnly:$DryRun
+            if (-not [string]::IsNullOrWhiteSpace($stagingIosApnsTeamId) -and -not [string]::IsNullOrWhiteSpace($stagingIosApnsKeyId) -and -not [string]::IsNullOrWhiteSpace($stagingIosApnsPrivateKey) -and -not [string]::IsNullOrWhiteSpace($stagingIosApnsBundleId)) {
+                Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_TEAM_ID" -Value $stagingIosApnsTeamId -WhatIfOnly:$DryRun
+                Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_KEY_ID" -Value $stagingIosApnsKeyId -WhatIfOnly:$DryRun
+                Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_PRIVATE_KEY" -Value $stagingIosApnsPrivateKey -WhatIfOnly:$DryRun
+                Set-WorkerSecret -ConfigPath $stagingSchedulerWranglerConfig -Name "PUSH_IOS_APNS_BUNDLE_ID" -Value $stagingIosApnsBundleId -WhatIfOnly:$DryRun
+            }
         }
         elseif ($Target -eq "Production") {
             Write-Host "\nSyncing Cloudflare Worker secrets for PRODUCTION..." -ForegroundColor Red
@@ -115,10 +117,12 @@ function Main {
             Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PROJECT_ID" -Value $productionAndroidFcmProjectId -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_CLIENT_EMAIL" -Value $productionAndroidFcmClientEmail -WhatIfOnly:$DryRun
             Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_ANDROID_FCM_PRIVATE_KEY" -Value $productionAndroidFcmPrivateKey -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_TEAM_ID" -Value $productionIosApnsTeamId -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_KEY_ID" -Value $productionIosApnsKeyId -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_PRIVATE_KEY" -Value $productionIosApnsPrivateKey -WhatIfOnly:$DryRun
-            Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_BUNDLE_ID" -Value $productionIosApnsBundleId -WhatIfOnly:$DryRun
+            if (-not [string]::IsNullOrWhiteSpace($productionIosApnsTeamId) -and -not [string]::IsNullOrWhiteSpace($productionIosApnsKeyId) -and -not [string]::IsNullOrWhiteSpace($productionIosApnsPrivateKey) -and -not [string]::IsNullOrWhiteSpace($productionIosApnsBundleId)) {
+                Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_TEAM_ID" -Value $productionIosApnsTeamId -WhatIfOnly:$DryRun
+                Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_KEY_ID" -Value $productionIosApnsKeyId -WhatIfOnly:$DryRun
+                Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_PRIVATE_KEY" -Value $productionIosApnsPrivateKey -WhatIfOnly:$DryRun
+                Set-WorkerSecret -ConfigPath $productionSchedulerWranglerConfig -Name "PUSH_IOS_APNS_BUNDLE_ID" -Value $productionIosApnsBundleId -WhatIfOnly:$DryRun
+            }
         }
     }
 
@@ -290,6 +294,16 @@ function Get-EnvValueOrThrow {
     return $value
 }
 
+function Test-IsPlaceholderValue {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    return $Value.Trim() -match '^<[^>]+>$'
+}
+
 function Set-GhSecret {
     param(
         [string]$Name,
@@ -300,6 +314,9 @@ function Set-GhSecret {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         Write-Warning "Skipping secret $Name - value is empty in the loaded env values"
         return
+    }
+    if (Test-IsPlaceholderValue -Value $Value) {
+        throw "Refusing to sync placeholder value for GitHub secret $Name. Resolve the value in .env.dev first."
     }
     if ($WhatIfOnly) {
         Write-Host "  [dry-run] gh secret set $Name --repo $Repository" -ForegroundColor Yellow
@@ -319,6 +336,9 @@ function Set-GhVariable {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         Write-Warning "Skipping variable $Name - value is empty in the loaded env values"
         return
+    }
+    if (Test-IsPlaceholderValue -Value $Value) {
+        throw "Refusing to sync placeholder value for GitHub variable $Name. Resolve the value in .env.dev first."
     }
     if ($WhatIfOnly) {
         Write-Host "  [dry-run] gh variable set $Name --repo $Repository --body <value>" -ForegroundColor Yellow
@@ -353,6 +373,9 @@ function Set-WorkerSecret {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         Write-Warning "Skipping Worker secret $Name for $ConfigPath - value is empty"
         return
+    }
+    if (Test-IsPlaceholderValue -Value $Value) {
+        throw "Refusing to sync placeholder value for Worker secret $Name. Resolve the value in .env.dev first."
     }
     Write-Host "[DEBUG] Would run command: npx wrangler secret put $Name --config $ConfigPath" -ForegroundColor Yellow
     if ($WhatIfOnly) {

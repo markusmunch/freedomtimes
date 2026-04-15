@@ -35,6 +35,7 @@ infra/terraform/environments/production/.wrangler/cache/wrangler-account.json
 .tmp/*
 logs/*
 web/android/local.properties
+web/android/app/google-services.json
 web/android/.gradle/
 web/android/**/build/
 web/android/**/.cxx/
@@ -42,3 +43,4 @@ web/android/**/.cxx/
 # Local VS Code workspace MCP config
 .vscode/mcp.json
 request-headers
+secrets/*

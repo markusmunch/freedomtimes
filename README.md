@@ -19,6 +19,8 @@ See [infra/terraform/README.md](infra/terraform/README.md) for setup and usage.
 
 See [LOCAL_DEV_REQUIREMENTS.md](LOCAL_DEV_REQUIREMENTS.md). This is a living document and will be updated as tooling and project requirements evolve.
 
+For Android local push setup and build troubleshooting, jump to [Android Local Build and Push Requirements](LOCAL_DEV_REQUIREMENTS.md#android-local-build-and-push-requirements).
+
 ## Development Guardrails
 
 See [DEVELOPMENT_GUARDRAILS.md](DEVELOPMENT_GUARDRAILS.md) for branch policy, ticket flow, and PR rules.

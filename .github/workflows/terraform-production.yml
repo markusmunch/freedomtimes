@@ -371,6 +371,7 @@ jobs:
           AUTH0_API_AUDIENCE="${{ vars.AUTH0_API_AUDIENCE || 'https://api.freedomtimes.news' }}"
           COOKIE_BASE_DOMAIN="${{ vars.COOKIE_BASE_DOMAIN }}"
           AUTH0_ROLES_CLAIM_NAMESPACE="${{ vars.AUTH0_ROLES_CLAIM_NAMESPACE }}"
+          API_UPSTREAM_MODE="${{ vars.API_UPSTREAM_MODE }}"
 
           if [ -z "$API_BASE_URL" ] || [ "$API_BASE_URL" = "null" ]; then
             echo "Missing required Terraform output: azure_editorial_api_public_base_url"
@@ -389,6 +390,114 @@ jobs:
 
           if [ -z "$AUTH0_ROLES_CLAIM_NAMESPACE" ]; then
             echo "Missing required repository var: AUTH0_ROLES_CLAIM_NAMESPACE"
+            exit 1
+          fi
+
+          if [ -z "$API_UPSTREAM_MODE" ]; then
+            echo "Missing required repository var: API_UPSTREAM_MODE"
+            exit 1
+          fi
+
+      - name: Validate Web Worker Secret Inputs
+        if: steps.tf_outputs.outputs.api_base_url != '' && steps.tf_outputs.outputs.api_base_url != 'null'
+        env:
+          AUTH0_DOMAIN_VALUE: ${{ secrets.TF_VAR_AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID_VALUE: ${{ steps.tf_outputs.outputs.auth0_app_client_id }}
+          AUTH0_CLIENT_SECRET_VALUE: ${{ steps.auth0_app_secret.outputs.auth0_app_client_secret }}
+          TURSO_DATABASE_URL_VALUE: ${{ steps.tf_outputs.outputs.turso_database_url }}
+          TURSO_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.turso_auth_token }}
+          TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_database_url }}
+          TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_auth_token }}
+          PUSH_SUBSCRIBE_PUBLIC_KEY_VALUE: ${{ secrets[format('PUSH_{0}_SUBSCRIBE_PUBLIC_KEY', 'PRODUCTION')] }}
+          EMDASH_AUTH_SECRET_VALUE: ${{ secrets.EMDASH_AUTH_SECRET_PRODUCTION }}
+        run: |
+          set -euo pipefail
+
+          required=(
+            AUTH0_DOMAIN_VALUE
+            AUTH0_CLIENT_ID_VALUE
+            AUTH0_CLIENT_SECRET_VALUE
+            TURSO_DATABASE_URL_VALUE
+            TURSO_AUTH_TOKEN_VALUE
+            TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE
+            TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE
+            PUSH_SUBSCRIBE_PUBLIC_KEY_VALUE
+            EMDASH_AUTH_SECRET_VALUE
+          )
+
+          missing=()
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required inputs for production web worker secret sync: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Validate Scheduler Worker Secret Inputs
+        if: steps.tf_outputs.outputs.scheduler_turso_database_url != '' && steps.tf_outputs.outputs.scheduler_turso_database_url != 'null'
+        env:
+          TURSO_SCHEDULER_DATABASE_URL_VALUE: ${{ steps.tf_outputs.outputs.scheduler_turso_database_url }}
+          TURSO_SCHEDULER_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.scheduler_turso_auth_token }}
+          TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_database_url }}
+          TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_auth_token }}
+          PUSH_VAPID_PUBLIC_KEY_VALUE: ${{ secrets[format('PUSH_{0}_SUBSCRIBE_PUBLIC_KEY', 'PRODUCTION')] }}
+          PUSH_VAPID_PRIVATE_KEY_VALUE: ${{ secrets[format('PUSH_{0}_VAPID_PRIVATE_KEY', 'PRODUCTION')] }}
+          PUSH_VAPID_SUBJECT_VALUE: ${{ secrets[format('PUSH_{0}_VAPID_SUBJECT', 'PRODUCTION')] }}
+          PUSH_ANDROID_FCM_PROJECT_ID_VALUE: ${{ secrets[format('PUSH_{0}_ANDROID_FCM_PROJECT_ID', 'PRODUCTION')] }}
+          PUSH_ANDROID_FCM_CLIENT_EMAIL_VALUE: ${{ secrets[format('PUSH_{0}_ANDROID_FCM_CLIENT_EMAIL', 'PRODUCTION')] }}
+          PUSH_ANDROID_FCM_PRIVATE_KEY_VALUE: ${{ secrets[format('PUSH_{0}_ANDROID_FCM_PRIVATE_KEY', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_TEAM_ID_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_TEAM_ID', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_KEY_ID_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_KEY_ID', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_PRIVATE_KEY_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_PRIVATE_KEY', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_BUNDLE_ID_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_BUNDLE_ID', 'PRODUCTION')] }}
+        run: |
+          set -euo pipefail
+
+          required=(
+            TURSO_SCHEDULER_DATABASE_URL_VALUE
+            TURSO_SCHEDULER_AUTH_TOKEN_VALUE
+            TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE
+            TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE
+            PUSH_VAPID_PUBLIC_KEY_VALUE
+            PUSH_VAPID_PRIVATE_KEY_VALUE
+            PUSH_VAPID_SUBJECT_VALUE
+            PUSH_ANDROID_FCM_PROJECT_ID_VALUE
+            PUSH_ANDROID_FCM_CLIENT_EMAIL_VALUE
+            PUSH_ANDROID_FCM_PRIVATE_KEY_VALUE
+          )
+
+          missing=()
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Missing required inputs for production scheduler worker secret sync: ${missing[*]}"
+            exit 1
+          fi
+
+          ios_required=(
+            PUSH_IOS_APNS_TEAM_ID_VALUE
+            PUSH_IOS_APNS_KEY_ID_VALUE
+            PUSH_IOS_APNS_PRIVATE_KEY_VALUE
+            PUSH_IOS_APNS_BUNDLE_ID_VALUE
+          )
+
+          ios_set=0
+          for name in "${ios_required[@]}"; do
+            if [ -n "${!name:-}" ]; then
+              ios_set=$((ios_set + 1))
+            fi
+          done
+
+          if [ "$ios_set" -ne 0 ] && [ "$ios_set" -ne 4 ]; then
+            echo "iOS APNS secrets must be configured all-or-none for production scheduler worker"
             exit 1
           fi
 
@@ -515,6 +624,7 @@ jobs:
           TURSO_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.turso_auth_token }}
           TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_database_url }}
           TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_auth_token }}
+          PUSH_SUBSCRIBE_PUBLIC_KEY_VALUE: ${{ secrets[format('PUSH_{0}_SUBSCRIBE_PUBLIC_KEY', 'PRODUCTION')] }}
           EMDASH_AUTH_SECRET_VALUE: ${{ secrets.EMDASH_AUTH_SECRET_PRODUCTION }}
           EMDASH_PREVIEW_SECRET_VALUE: ${{ secrets.EMDASH_PREVIEW_SECRET_PRODUCTION }}
         run: |
@@ -532,6 +642,7 @@ jobs:
           printf '%s' "$TURSO_AUTH_TOKEN_VALUE" | npx wrangler secret put TURSO_AUTH_TOKEN --config wrangler.jsonc --env production
           printf '%s' "$TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE" | npx wrangler secret put TURSO_SUBSCRIPTIONS_DATABASE_URL --config wrangler.jsonc --env production
           printf '%s' "$TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE" | npx wrangler secret put TURSO_SUBSCRIPTIONS_AUTH_TOKEN --config wrangler.jsonc --env production
+          printf '%s' "$PUSH_SUBSCRIBE_PUBLIC_KEY_VALUE" | npx wrangler secret put PUSH_SUBSCRIBE_PUBLIC_KEY --config wrangler.jsonc --env production
           printf '%s' "$EMDASH_AUTH_SECRET_VALUE" | npx wrangler secret put EMDASH_AUTH_SECRET --config wrangler.jsonc --env production
 
           if [ -n "${EMDASH_PREVIEW_SECRET_VALUE:-}" ]; then
@@ -546,11 +657,38 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
           TURSO_SCHEDULER_DATABASE_URL_VALUE: ${{ steps.tf_outputs.outputs.scheduler_turso_database_url }}
           TURSO_SCHEDULER_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.scheduler_turso_auth_token }}
+          TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_database_url }}
+          TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE: ${{ steps.tf_outputs.outputs.subscriptions_turso_auth_token }}
+          PUSH_VAPID_PUBLIC_KEY_VALUE: ${{ secrets[format('PUSH_{0}_SUBSCRIBE_PUBLIC_KEY', 'PRODUCTION')] }}
+          PUSH_VAPID_PRIVATE_KEY_VALUE: ${{ secrets[format('PUSH_{0}_VAPID_PRIVATE_KEY', 'PRODUCTION')] }}
+          PUSH_VAPID_SUBJECT_VALUE: ${{ secrets[format('PUSH_{0}_VAPID_SUBJECT', 'PRODUCTION')] }}
+          PUSH_ANDROID_FCM_PROJECT_ID_VALUE: ${{ secrets[format('PUSH_{0}_ANDROID_FCM_PROJECT_ID', 'PRODUCTION')] }}
+          PUSH_ANDROID_FCM_CLIENT_EMAIL_VALUE: ${{ secrets[format('PUSH_{0}_ANDROID_FCM_CLIENT_EMAIL', 'PRODUCTION')] }}
+          PUSH_ANDROID_FCM_PRIVATE_KEY_VALUE: ${{ secrets[format('PUSH_{0}_ANDROID_FCM_PRIVATE_KEY', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_TEAM_ID_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_TEAM_ID', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_KEY_ID_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_KEY_ID', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_PRIVATE_KEY_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_PRIVATE_KEY', 'PRODUCTION')] }}
+          PUSH_IOS_APNS_BUNDLE_ID_VALUE: ${{ secrets[format('PUSH_{0}_IOS_APNS_BUNDLE_ID', 'PRODUCTION')] }}
         run: |
           set -euo pipefail
 
           printf '%s' "$TURSO_SCHEDULER_DATABASE_URL_VALUE" | npx wrangler secret put TURSO_SCHEDULER_DATABASE_URL --config wrangler.jsonc --env production
           printf '%s' "$TURSO_SCHEDULER_AUTH_TOKEN_VALUE" | npx wrangler secret put TURSO_SCHEDULER_AUTH_TOKEN --config wrangler.jsonc --env production
+          printf '%s' "$TURSO_SUBSCRIPTIONS_DATABASE_URL_VALUE" | npx wrangler secret put TURSO_SUBSCRIPTIONS_DATABASE_URL --config wrangler.jsonc --env production
+          printf '%s' "$TURSO_SUBSCRIPTIONS_AUTH_TOKEN_VALUE" | npx wrangler secret put TURSO_SUBSCRIPTIONS_AUTH_TOKEN --config wrangler.jsonc --env production
+          printf '%s' "$PUSH_VAPID_PUBLIC_KEY_VALUE" | npx wrangler secret put PUSH_VAPID_PUBLIC_KEY --config wrangler.jsonc --env production
+          printf '%s' "$PUSH_VAPID_PRIVATE_KEY_VALUE" | npx wrangler secret put PUSH_VAPID_PRIVATE_KEY --config wrangler.jsonc --env production
+          printf '%s' "$PUSH_VAPID_SUBJECT_VALUE" | npx wrangler secret put PUSH_VAPID_SUBJECT --config wrangler.jsonc --env production
+          printf '%s' "$PUSH_ANDROID_FCM_PROJECT_ID_VALUE" | npx wrangler secret put PUSH_ANDROID_FCM_PROJECT_ID --config wrangler.jsonc --env production
+          printf '%s' "$PUSH_ANDROID_FCM_CLIENT_EMAIL_VALUE" | npx wrangler secret put PUSH_ANDROID_FCM_CLIENT_EMAIL --config wrangler.jsonc --env production
+          printf '%s' "$PUSH_ANDROID_FCM_PRIVATE_KEY_VALUE" | npx wrangler secret put PUSH_ANDROID_FCM_PRIVATE_KEY --config wrangler.jsonc --env production
+
+          if [ -n "${PUSH_IOS_APNS_TEAM_ID_VALUE:-}" ] && [ -n "${PUSH_IOS_APNS_KEY_ID_VALUE:-}" ] && [ -n "${PUSH_IOS_APNS_PRIVATE_KEY_VALUE:-}" ] && [ -n "${PUSH_IOS_APNS_BUNDLE_ID_VALUE:-}" ]; then
+            printf '%s' "$PUSH_IOS_APNS_TEAM_ID_VALUE" | npx wrangler secret put PUSH_IOS_APNS_TEAM_ID --config wrangler.jsonc --env production
+            printf '%s' "$PUSH_IOS_APNS_KEY_ID_VALUE" | npx wrangler secret put PUSH_IOS_APNS_KEY_ID --config wrangler.jsonc --env production
+            printf '%s' "$PUSH_IOS_APNS_PRIVATE_KEY_VALUE" | npx wrangler secret put PUSH_IOS_APNS_PRIVATE_KEY --config wrangler.jsonc --env production
+            printf '%s' "$PUSH_IOS_APNS_BUNDLE_ID_VALUE" | npx wrangler secret put PUSH_IOS_APNS_BUNDLE_ID --config wrangler.jsonc --env production
+          fi
 
       - name: Cleanup Unlock TFC Workspace
         if: always()
