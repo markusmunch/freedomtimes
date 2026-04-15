@@ -43,6 +43,7 @@ export async function upsertPushSubscription(input: PushSubscriptionInsert): Pro
       locale: input.locale,
       userAgent: input.userAgent,
       active: 1,
+      createdAt: now,
       updatedAt: now,
       lastFailureAt: null,
       lastFailureReason: null,
