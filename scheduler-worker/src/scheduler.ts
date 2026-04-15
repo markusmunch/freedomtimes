@@ -697,8 +697,6 @@ async function markSubscriptionSuccess(db: AppDb, id: string): Promise<void> {
   await db.update(pushSubscriptionsTable)
     .set({
       lastSuccessAt: sql`CURRENT_TIMESTAMP`,
-      lastFailureAt: null,
-      lastFailureReason: null,
       active: 1,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })

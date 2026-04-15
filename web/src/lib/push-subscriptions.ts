@@ -55,8 +55,6 @@ export async function upsertPushSubscription(input: PushSubscriptionInsert): Pro
         userAgent: input.userAgent,
         active: 1,
         updatedAt: now,
-        lastFailureAt: null,
-        lastFailureReason: null,
       },
       setWhere: eq(pushSubscriptionsTable.endpoint, endpoint),
     }).run();
