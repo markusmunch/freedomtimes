@@ -2,6 +2,7 @@
 import { getEmDashCollection } from 'emdash';
 
 import Layout from '../layouts/Layout.astro';
+import NotificationPermission from '../components/NotificationPermission';
 import { requireEditorialSession } from '../lib/editorial-session';
 
 type Story = {
@@ -107,6 +108,8 @@ const rails = stories.slice(2);
       </nav>
       <p class="welcome">Signed in as {name}</p>
     </header>
+
+    <NotificationPermission client:load />
 
     <main class="front-grid">
       {lead ? (

@@ -101,6 +101,14 @@ export async function initializeNativePushBridge(): Promise<void> {
 
   await PushNotifications.addListener('registration', ({ value }) => {
     resolveRegistrationWaiters(value);
+
+    // Silently persist the token whenever FCM issues/refreshes it.
+    const platform = getNativePlatform();
+    if (platform) {
+      persistSubscription({ platform, token: value }).catch((error) => {
+        console.warn('[notifications] silent token persist failed', error);
+      });
+    }
   });
 
   await PushNotifications.addListener('registrationError', (error) => {
@@ -119,6 +127,27 @@ export async function initializeNativePushBridge(): Promise<void> {
 
     window.location.assign(targetUrl);
   });
+
+  // If permission is already granted, register silently so the FCM token is
+  // stored without any user interaction. On Android <13, permission is
+  // auto-granted, so this covers all such devices transparently. On Android
+  // 13+, this silently re-registers after the first explicit grant.
+  const platform = getNativePlatform();
+  const permissions = await PushNotifications.checkPermissions();
+  if (permissions.receive === 'granted' && platform) {
+    if (platform === 'android') {
+      await PushNotifications.createChannel({
+        id: NATIVE_CHANNEL_ID,
+        name: NATIVE_CHANNEL_NAME,
+        description: NATIVE_CHANNEL_DESCRIPTION,
+        importance: 5,
+        visibility: 1,
+        vibration: true,
+      });
+    }
+
+    await PushNotifications.register();
+  }
 }
 
 function isNativeNotificationPlatform(): boolean {
@@ -162,6 +191,8 @@ async function enableNativePushNotifications(): Promise<void> {
     await PushNotifications.register();
     const token = await tokenPromise;
 
+    // If the registration listener already persisted the token, this is a
+    // harmless upsert (same endpoint). We still await it so errors surface.
     await persistSubscription({
       platform,
       token,
