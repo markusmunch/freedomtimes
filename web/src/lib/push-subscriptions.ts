@@ -1,5 +1,6 @@
-import { createClient } from '@libsql/client/web';
+import { eq } from 'drizzle-orm';
 import { readEnv, readOptionalEnv } from './auth';
+import { createSubscriptionsDb, pushSubscriptionsTable } from './subscriptions-db';
 
 export type WebPushSubscriptionRecord = {
   endpoint: string;
@@ -28,37 +29,36 @@ export function getPushSubscribePublicKey(): string {
 }
 
 export async function upsertPushSubscription(input: PushSubscriptionInsert): Promise<void> {
-  const client = createSubscriptionsClient();
+  const { client, db } = createSubscriptionsDb();
 
   try {
     const now = new Date().toISOString();
     const endpoint = getStoredEndpoint(input.subscription);
     const subscriptionJson = JSON.stringify(normalizeStoredSubscription(input.subscription));
 
-    await client.execute({
-      sql: `
-        INSERT INTO push_subscriptions (
-          id,
-          endpoint,
-          subscription_json,
-          locale,
-          user_agent,
-          active,
-          updated_at,
-          last_failure_at,
-          last_failure_reason
-        ) VALUES (?, ?, ?, ?, ?, 1, ?, NULL, NULL)
-        ON CONFLICT(endpoint) DO UPDATE SET
-          subscription_json = excluded.subscription_json,
-          locale = excluded.locale,
-          user_agent = excluded.user_agent,
-          active = 1,
-          updated_at = excluded.updated_at,
-          last_failure_at = NULL,
-          last_failure_reason = NULL
-      `,
-      args: [crypto.randomUUID(), endpoint, subscriptionJson, input.locale, input.userAgent, now],
-    });
+    await db.insert(pushSubscriptionsTable).values({
+      id: crypto.randomUUID(),
+      endpoint,
+      subscriptionJson,
+      locale: input.locale,
+      userAgent: input.userAgent,
+      active: 1,
+      updatedAt: now,
+      lastFailureAt: null,
+      lastFailureReason: null,
+    }).onConflictDoUpdate({
+      target: pushSubscriptionsTable.endpoint,
+      set: {
+        subscriptionJson,
+        locale: input.locale,
+        userAgent: input.userAgent,
+        active: 1,
+        updatedAt: now,
+        lastFailureAt: null,
+        lastFailureReason: null,
+      },
+      setWhere: eq(pushSubscriptionsTable.endpoint, endpoint),
+    }).run();
   } finally {
     client.close();
   }
@@ -100,14 +100,6 @@ export function readPushSubscriptionRequest(body: unknown): PushSubscriptionReco
   };
 }
 
-function createSubscriptionsClient() {
-  return createClient({
-    url: readEnv('TURSO_SUBSCRIPTIONS_DATABASE_URL'),
-    authToken: readEnv('TURSO_SUBSCRIPTIONS_AUTH_TOKEN'),
-    fetch: createWorkerSafeFetch(),
-  });
-}
-
 function readNativePushSubscription(candidate: Record<string, unknown>): NativePushSubscriptionRecord | null {
   const platform = candidate.platform;
   const token = typeof candidate.token === 'string' ? candidate.token.trim() : '';
@@ -147,26 +139,3 @@ function isNativePushSubscription(subscription: PushSubscriptionRecord): subscri
   return 'platform' in subscription && 'token' in subscription;
 }
 
-function createWorkerSafeFetch():
-  | ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>)
-  | undefined {
-  if (typeof globalThis.fetch !== 'function') {
-    return undefined;
-  }
-
-  return (input: RequestInfo | URL, init?: RequestInit) => {
-    if (input && typeof input === 'object' && 'url' in input) {
-      const request = input as Request;
-      return globalThis.fetch(request.url, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-        redirect: request.redirect,
-        signal: request.signal,
-        ...(init || {}),
-      });
-    }
-
-    return globalThis.fetch(input, init);
-  };
-}

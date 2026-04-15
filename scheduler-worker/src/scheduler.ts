@@ -1,6 +1,7 @@
-import { createClient } from '@libsql/client';
+import { and, eq, sql } from 'drizzle-orm';
 import { importPKCS8, SignJWT } from 'jose';
 import { ApplicationServerKeys, generatePushHTTPRequest } from 'webpush-webcrypto';
+import { type AppDb, createDatabase, pushSubscriptionsTable, schedulerJobsTable } from './db';
 
 type Env = {
   TURSO_SCHEDULER_DATABASE_URL?: string;
@@ -118,37 +119,35 @@ export default {
       throw new Error('TURSO_SCHEDULER_DATABASE_URL and TURSO_SCHEDULER_AUTH_TOKEN are required');
     }
 
-    const db = createClient({ url: databaseUrl, authToken });
+    const { client, db } = createDatabase(databaseUrl, authToken);
 
     try {
-      const result = await db.execute({
-        sql: `
-          SELECT id, handler, payload, interval_minutes, next_run_at
-          FROM scheduler_jobs
-          WHERE active = 1
-            AND datetime(next_run_at) <= datetime('now')
-          ORDER BY datetime(next_run_at) ASC
-          LIMIT ?
-        `,
-        args: [MAX_JOBS_PER_TICK],
-      });
+      const jobs = await db.select({
+        id: schedulerJobsTable.id,
+        handler: schedulerJobsTable.handler,
+        payload: schedulerJobsTable.payload,
+        interval_minutes: schedulerJobsTable.intervalMinutes,
+        next_run_at: schedulerJobsTable.nextRunAt,
+      }).from(schedulerJobsTable)
+        .where(sql`${schedulerJobsTable.active} = 1 AND datetime(${schedulerJobsTable.nextRunAt}) <= datetime('now')`)
+        .orderBy(sql`datetime(${schedulerJobsTable.nextRunAt}) ASC`)
+        .limit(MAX_JOBS_PER_TICK);
 
-      for (const row of result.rows) {
-        const job = toSchedulerJob(row);
-        const claim = await db.execute({
-          sql: `
-            UPDATE scheduler_jobs
-            SET next_run_at = datetime('now', '+' || interval_minutes || ' minutes'),
-                last_run_at = CURRENT_TIMESTAMP,
-                run_count = run_count + 1,
-                last_error = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-              AND active = 1
-              AND next_run_at = ?
-          `,
-          args: [job.id, job.next_run_at],
-        });
+      for (const job of jobs) {
+        const claim = await db.update(schedulerJobsTable)
+          .set({
+            nextRunAt: sql`datetime('now', '+' || ${schedulerJobsTable.intervalMinutes} || ' minutes')`,
+            lastRunAt: sql`CURRENT_TIMESTAMP`,
+            runCount: sql`${schedulerJobsTable.runCount} + 1`,
+            lastError: null,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          })
+          .where(and(
+            eq(schedulerJobsTable.id, job.id),
+            eq(schedulerJobsTable.active, 1),
+            eq(schedulerJobsTable.nextRunAt, job.next_run_at),
+          ))
+          .run();
 
         if ((claim.rowsAffected ?? 0) < 1) {
           continue;
@@ -158,20 +157,18 @@ export default {
           await dispatchJob(job, env);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          await db.execute({
-            sql: `
-              UPDATE scheduler_jobs
-              SET last_error = ?,
-                  updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `,
-            args: [message, job.id],
-          });
+          await db.update(schedulerJobsTable)
+            .set({
+              lastError: message,
+              updatedAt: sql`CURRENT_TIMESTAMP`,
+            })
+            .where(eq(schedulerJobsTable.id, job.id))
+            .run();
           throw error;
         }
       }
     } finally {
-      db.close();
+      client.close();
     }
   },
 };
@@ -202,7 +199,7 @@ async function deliverNotification(
     throw new Error('TURSO_SUBSCRIPTIONS_DATABASE_URL and TURSO_SUBSCRIPTIONS_AUTH_TOKEN are required');
   }
 
-  const subscriptionsDb = createClient({ url: subscriptionsDatabaseUrl, authToken: subscriptionsAuthToken });
+  const { client: subscriptionsClient, db: subscriptionsDb } = createDatabase(subscriptionsDatabaseUrl, subscriptionsAuthToken);
   const webPushConfig = readWebPushConfig(env);
   const androidPushConfig = readAndroidPushConfig(env);
   const iosPushConfig = readIosPushConfig(env);
@@ -215,24 +212,21 @@ async function deliverNotification(
   let apnsTokenPromise: Promise<string> | null = null;
 
   try {
-    const result = await subscriptionsDb.execute({
-      sql: `
-        SELECT id, endpoint, subscription_json
-        FROM push_subscriptions
-        WHERE active = 1
-        ORDER BY datetime(updated_at) DESC
-        LIMIT ?
-      `,
-      args: [MAX_SUBSCRIPTIONS_PER_JOB],
-    });
+    const subscriptions = await subscriptionsDb.select({
+      id: pushSubscriptionsTable.id,
+      endpoint: pushSubscriptionsTable.endpoint,
+      subscription_json: pushSubscriptionsTable.subscriptionJson,
+    }).from(pushSubscriptionsTable)
+      .where(eq(pushSubscriptionsTable.active, 1))
+      .orderBy(sql`datetime(${pushSubscriptionsTable.updatedAt}) DESC`)
+      .limit(MAX_SUBSCRIPTIONS_PER_JOB);
 
-    if (result.rows.length === 0) {
+    if (subscriptions.length === 0) {
       console.log(`[scheduler] ${jobId}: no active push subscriptions`);
       return { delivered, failed, deactivated };
     }
 
-    for (const row of result.rows) {
-      const stored = toStoredPushSubscription(row);
+    for (const stored of subscriptions) {
       const target = parseStoredTarget(stored.subscription_json);
 
       if (!target) {
@@ -297,26 +291,8 @@ async function deliverNotification(
 
     return { delivered, failed, deactivated };
   } finally {
-    subscriptionsDb.close();
+    subscriptionsClient.close();
   }
-}
-
-function toSchedulerJob(row: Record<string, unknown>): SchedulerJob {
-  return {
-    id: String(row.id ?? ''),
-    handler: String(row.handler ?? ''),
-    payload: String(row.payload ?? '{}'),
-    interval_minutes: Number(row.interval_minutes ?? 0),
-    next_run_at: String(row.next_run_at ?? ''),
-  };
-}
-
-function toStoredPushSubscription(row: Record<string, unknown>): StoredPushSubscription {
-  return {
-    id: String(row.id ?? ''),
-    endpoint: String(row.endpoint ?? ''),
-    subscription_json: String(row.subscription_json ?? '{}'),
-  };
 }
 
 function parsePayload(rawPayload: string): Record<string, unknown> {
@@ -708,38 +684,34 @@ function normalizePrivateKey(value: string): string {
   return value.replace(/\\n/g, '\n').trim();
 }
 
-async function markSubscriptionSuccess(db: ReturnType<typeof createClient>, id: string): Promise<void> {
-  await db.execute({
-    sql: `
-      UPDATE push_subscriptions
-      SET last_success_at = CURRENT_TIMESTAMP,
-          last_failure_at = NULL,
-          last_failure_reason = NULL,
-          active = 1,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `,
-    args: [id],
-  });
+async function markSubscriptionSuccess(db: AppDb, id: string): Promise<void> {
+  await db.update(pushSubscriptionsTable)
+    .set({
+      lastSuccessAt: sql`CURRENT_TIMESTAMP`,
+      lastFailureAt: null,
+      lastFailureReason: null,
+      active: 1,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(eq(pushSubscriptionsTable.id, id))
+    .run();
 }
 
 async function markSubscriptionFailure(
-  db: ReturnType<typeof createClient>,
+  db: AppDb,
   id: string,
   reason: string,
   deactivate: boolean,
 ): Promise<void> {
-  await db.execute({
-    sql: `
-      UPDATE push_subscriptions
-      SET last_failure_at = CURRENT_TIMESTAMP,
-          last_failure_reason = ?,
-          active = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `,
-    args: [reason.slice(0, 1000), deactivate ? 0 : 1, id],
-  });
+  await db.update(pushSubscriptionsTable)
+    .set({
+      lastFailureAt: sql`CURRENT_TIMESTAMP`,
+      lastFailureReason: reason.slice(0, 1000),
+      active: deactivate ? 0 : 1,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(eq(pushSubscriptionsTable.id, id))
+    .run();
 }
 
 async function safeReadResponseText(response: Response): Promise<string> {
