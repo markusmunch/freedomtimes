@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 
 const NATIVE_CHANNEL_ID = 'reader-alerts';
@@ -12,6 +12,10 @@ type NotificationSupportState = {
   supported: boolean;
   buttonDisabled: boolean;
   message: string;
+};
+
+type NativeAppConfigPlugin = {
+  getFirebaseStatus: () => Promise<{ firebaseConfigured: boolean }>;
 };
 
 type RegistrationWaiter = {
@@ -29,10 +33,19 @@ declare global {
 const registrationWaiters: RegistrationWaiter[] = [];
 let nativeRegistrationPromise: Promise<void> | null = null;
 let listenersAttached = false;
+const nativeAppConfig = registerPlugin<NativeAppConfigPlugin>('NativeAppConfig');
 
 export async function getNotificationSupportState(publicKey: string): Promise<NotificationSupportState> {
   if (isNativeNotificationPlatform()) {
     await initializeNativePushBridge();
+
+    if (getNativePlatform() === 'android' && !(await isAndroidFirebaseConfigured())) {
+      return {
+        supported: false,
+        buttonDisabled: true,
+        message: 'Android push is not configured in this app build yet.',
+      };
+    }
 
     const permissions = await PushNotifications.checkPermissions();
     if (permissions.receive === 'granted') {
@@ -101,14 +114,6 @@ export async function initializeNativePushBridge(): Promise<void> {
 
   await PushNotifications.addListener('registration', ({ value }) => {
     resolveRegistrationWaiters(value);
-
-    // Silently persist the token whenever FCM issues/refreshes it.
-    const platform = getNativePlatform();
-    if (platform) {
-      persistSubscription({ platform, token: value }).catch((error) => {
-        console.warn('[notifications] silent token persist failed', error);
-      });
-    }
   });
 
   await PushNotifications.addListener('registrationError', (error) => {
@@ -127,27 +132,6 @@ export async function initializeNativePushBridge(): Promise<void> {
 
     window.location.assign(targetUrl);
   });
-
-  // If permission is already granted, register silently so the FCM token is
-  // stored without any user interaction. On Android <13, permission is
-  // auto-granted, so this covers all such devices transparently. On Android
-  // 13+, this silently re-registers after the first explicit grant.
-  const platform = getNativePlatform();
-  const permissions = await PushNotifications.checkPermissions();
-  if (permissions.receive === 'granted' && platform) {
-    if (platform === 'android') {
-      await PushNotifications.createChannel({
-        id: NATIVE_CHANNEL_ID,
-        name: NATIVE_CHANNEL_NAME,
-        description: NATIVE_CHANNEL_DESCRIPTION,
-        importance: 5,
-        visibility: 1,
-        vibration: true,
-      });
-    }
-
-    await PushNotifications.register();
-  }
 }
 
 function isNativeNotificationPlatform(): boolean {
@@ -163,6 +147,10 @@ async function enableNativePushNotifications(): Promise<void> {
     const platform = getNativePlatform();
     if (!platform) {
       throw new Error('Native push notifications are not supported on this platform.');
+    }
+
+    if (platform === 'android' && !(await isAndroidFirebaseConfigured())) {
+      throw new Error('Android push is not configured in this app build yet.');
     }
 
     await initializeNativePushBridge();
@@ -317,4 +305,13 @@ function decodeBase64Url(value: string): Uint8Array {
   }
 
   return bytes;
+}
+
+async function isAndroidFirebaseConfigured(): Promise<boolean> {
+  try {
+    const status = await nativeAppConfig.getFirebaseStatus();
+    return status.firebaseConfigured === true;
+  } catch {
+    return false;
+  }
 }
