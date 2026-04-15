@@ -14,6 +14,11 @@ type Story = {
   updatedAt: string | null;
 };
 
+function isLikelyNativeShellRequest(request: Request): boolean {
+  const userAgent = request.headers.get('user-agent')?.toLowerCase() ?? '';
+  return userAgent.includes('; wv') || userAgent.includes(' version/4.0');
+}
+
 function readImageSrc(value: unknown): string | null {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -45,6 +50,7 @@ if (session instanceof Response) {
 }
 
 const name = session.displayName;
+const showWebNotificationPanel = !isLikelyNativeShellRequest(Astro.request);
 
 const { entries: postEntries, error: postsError } = await getEmDashCollection('posts', {
   status: 'published',
@@ -109,7 +115,7 @@ const rails = stories.slice(2);
       <p class="welcome">Signed in as {name}</p>
     </header>
 
-    <NotificationPermission client:load />
+    {showWebNotificationPanel && <NotificationPermission client:load />}
 
     <main class="front-grid">
       {lead ? (
