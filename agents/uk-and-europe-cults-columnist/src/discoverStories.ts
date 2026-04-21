@@ -637,7 +637,8 @@ async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
   const rotatedWatchlistQueries = rotateArray(watchlistQueries, runSeed);
   const boundedWatchlistQueries = rotatedWatchlistQueries.slice(0, MAX_WATCHLIST_GOOGLE_QUERIES_PER_RUN);
   const queries = [...boundedWatchlistQueries, ...GOOGLE_NEWS_GENERIC_QUERIES];
-  const perQueryLimit = 2;
+  // Google News RSS search returns up to 100 items; consume the full page per query.
+  const perQueryLimit = 100;
   const globalCeiling = Math.max(queries.length * perQueryLimit, queries.length);
   let queryIndex = 0;
 
