@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs';
 import { evaluateRelevance } from './relevance.js';
 import { evaluateSourceReliability } from './sourceReliability.js';
 import { ALL_CULT_TERMS } from './cultTerms.js';
+import { fetchTextWithBrowserRender } from './browserFetch.js';
+import {
+  BROWSER_RENDER_FALLBACK_ENABLED,
+  BROWSER_RENDER_FALLBACK_STATUS_CODES,
+} from './http-cache/config.js';
 import {
   EXCLUDED_SOURCE_HOSTS,
   FIGURATIVE_CULT_CONTEXT_TERMS,
@@ -484,13 +489,17 @@ export async function runPipeline(
   let effectiveUrl = url;
   let response = await fetchTextWithCache(effectiveUrl);
 
-  if (!response.ok && archiveFallbackHosts.size > 0) {
+  if (!response.ok) {
     try {
       const originalHost = normalizeHost(new URL(effectiveUrl).hostname);
       const shouldTryArchive = Array.from(archiveFallbackHosts).some(
         (h) => originalHost === h || originalHost.endsWith(`.${h}`),
       );
-      if (shouldTryArchive) {
+
+      // Bot-block statuses commonly indicate access controls. Attempting
+      // an archival mirror gives us a second retrieval path without changing
+      // source reliability policy.
+      if (shouldTryArchive || BROWSER_RENDER_FALLBACK_STATUS_CODES.has(response.status)) {
         const archiveUrl = `https://archive.ph/newest/${effectiveUrl}`;
         const archiveResponse = await fetchTextWithCache(archiveUrl);
         if (archiveResponse.ok) {
@@ -502,7 +511,26 @@ export async function runPipeline(
     }
   }
 
+  if (
+    !response.ok &&
+    BROWSER_RENDER_FALLBACK_ENABLED &&
+    BROWSER_RENDER_FALLBACK_STATUS_CODES.has(response.status)
+  ) {
+    try {
+      const browserResponse = await fetchTextWithBrowserRender(effectiveUrl);
+      if (browserResponse.ok) {
+        response = browserResponse;
+      }
+    } catch {
+      // Browser fallback failed; keep current response.
+    }
+  }
+
   if (!response.ok) {
+    if (BROWSER_RENDER_FALLBACK_STATUS_CODES.has(response.status)) {
+      throw new Error(`Source fetch blocked by remote anti-bot controls: HTTP ${response.status}`);
+    }
+
     throw new Error(`Failed to fetch source URL: HTTP ${response.status}`);
   }
 
