@@ -21,6 +21,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "google-news-url-decoder": "^1.2.1"
+    "google-news-url-decoder": "^1.2.1",
+    "playwright": "^1.59.1"
   }
 }

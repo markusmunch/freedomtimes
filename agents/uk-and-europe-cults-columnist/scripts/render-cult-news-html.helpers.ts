@@ -52,6 +52,26 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(?:x([0-9a-f]+)|([0-9]+));/gi, (_, hex, dec) =>
+      String.fromCodePoint(hex ? parseInt(hex, 16) : parseInt(dec, 10))
+    )
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, '\u00a0')
+    .replace(/&ndash;/gi, '\u2013')
+    .replace(/&mdash;/gi, '\u2014')
+    .replace(/&lsquo;/gi, '\u2018')
+    .replace(/&rsquo;/gi, '\u2019')
+    .replace(/&ldquo;/gi, '\u201c')
+    .replace(/&rdquo;/gi, '\u201d')
+    .replace(/&hellip;/gi, '\u2026');
+}
+
 function getMetaContent(html: string, key: string, type: 'property' | 'name'): string | undefined {
   const attr = type === 'property' ? 'property' : 'name';
   const pattern = new RegExp(`<meta[^>]+${attr}=["']${key}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i');
@@ -221,8 +241,8 @@ export async function fetchStoryMeta(url: string): Promise<StoryMeta> {
     );
 
     return {
-      title,
-      description,
+      title: title ? decodeHtmlEntities(title) : undefined,
+      description: description ? decodeHtmlEntities(description) : undefined,
       image,
       publishedAt,
     };
