@@ -39,10 +39,10 @@
 	"env": {
 		"local": {
 			"vars": {
-				"AUTH0_DOMAIN": "test.auth0.com",
 				"AUTH0_API_AUDIENCE": "https://api.freedomtimes.news",
 				"AUTH0_ROLES_CLAIM_NAMESPACE": "https://freedomtimes.news/roles"
 			},
+			// Secrets for local dev: copy .dev.vars.example to .dev.vars and fill in values.
 			"durable_objects": {
 				"bindings": [
 					{

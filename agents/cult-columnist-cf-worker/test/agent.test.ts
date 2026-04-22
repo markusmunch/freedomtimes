@@ -60,9 +60,10 @@ async function callApi(
 
 describe('Agent Pipeline Tests', () => {
   let workerAvailable = false;
+  let networkAvailable = false;
 
   beforeAll(async () => {
-    // Optionally wait for server to be ready
+    // Check if dev server is up
     for (let i = 0; i < 10; i++) {
       try {
         const res = await callApi('/health');
@@ -76,6 +77,15 @@ describe('Agent Pipeline Tests', () => {
     }
     if (!workerAvailable) {
       console.warn('Worker not running on port 8788 — skipping integration tests');
+      return;
+    }
+
+    // Check if outbound network is reachable (required for feed fetch tests)
+    try {
+      const probe = await fetch('https://feeds.bbci.co.uk/news/rss.xml', { signal: AbortSignal.timeout(5000) });
+      networkAvailable = probe.status > 0;
+    } catch {
+      console.warn('No outbound network access — feed count assertions will be skipped');
     }
   });
 
@@ -142,8 +152,11 @@ describe('Agent Pipeline Tests', () => {
       expect(res.status).toBe(200);
       const body = res.body as Record<string, unknown>;
       const stageMetrics = body.stageMetrics as Record<string, unknown>;
-      // In local dev, feed network requests may all fail — assert shape not count
-      expect(Number(stageMetrics?.feedFetchRows ?? 0)).toBeGreaterThanOrEqual(0);
+      if (networkAvailable) {
+        expect(Number(stageMetrics?.feedFetchRows ?? 0)).toBeGreaterThan(0);
+      } else {
+        expect(Number(stageMetrics?.feedFetchRows ?? 0)).toBeGreaterThanOrEqual(0);
+      }
     });
 
     wit('should have run status awaiting_review_feed_fetch', async () => {
@@ -194,8 +207,11 @@ describe('Agent Pipeline Tests', () => {
       expect(res.status).toBe(200);
       const body = res.body as Record<string, unknown>;
       const stageMetrics = body.stageMetrics as Record<string, unknown>;
-      // In local dev, candidates depend on feeds being fetchable — assert shape not count
-      expect(Number(stageMetrics?.candidateRows ?? 0)).toBeGreaterThanOrEqual(0);
+      if (networkAvailable) {
+        expect(Number(stageMetrics?.candidateRows ?? 0)).toBeGreaterThan(0);
+      } else {
+        expect(Number(stageMetrics?.candidateRows ?? 0)).toBeGreaterThanOrEqual(0);
+      }
     });
 
     wit('should have run status awaiting_review_candidate_extract', async () => {

@@ -8,6 +8,17 @@ export type Env = {
   AUTH0_DOMAIN: string;
   AUTH0_API_AUDIENCE: string;
   AUTH0_ROLES_CLAIM_NAMESPACE?: string;
+  AUTH0_CLIENT_ID?: string;
+  AUTH0_CLIENT_SECRET?: string;
+  NEWSDATA_ENABLED?: string;
+  NEWSDATA_API_KEY?: string;
+  NEWSIO_API_KEY?: string;
+  NEWSDATA_COUNTRY_CODES?: string;
+  NEWSDATA_LANGUAGES?: string;
+  NEWSDATA_QUERY_LIMIT?: string;
+  NEWSDATA_TIMEFRAME_HOURS?: string;
+  /** Must be explicitly set to 'true' alongside AUTH0_DOMAIN=test.auth0.com to enable test token bypass. Never set in staging/production. */
+  ALLOW_TEST_TOKENS?: string;
 };
 
 export type RunStatus =

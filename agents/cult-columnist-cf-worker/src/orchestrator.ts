@@ -2,6 +2,7 @@ import { Agent, callable } from 'agents';
 import type { Env, StageName } from './types';
 import {
   createRun,
+  deleteRunData,
   getRunSummary,
   logStageEvent,
   purgeExpiredHttpCache,
@@ -36,12 +37,12 @@ export class CultAgentOrchestrator extends Agent<Env, AgentState> {
 
   private async runSingleStage(runId: string, stage: StageName): Promise<Record<string, unknown>> {
     if (stage === 'feed_fetch') {
-      const metrics = await runFeedFetchStage(this.env.AGENT_DB);
+      const metrics = await runFeedFetchStage(this.env.AGENT_DB, this.env.AGENT_STORE, this.env);
       await setRunStatus(this.env.AGENT_DB, runId, 'awaiting_review_feed_fetch', stage);
       return { stage, ...metrics };
     }
 
-    const metrics = await runCandidateExtractStage(this.env.AGENT_DB, runId);
+    const metrics = await runCandidateExtractStage(this.env.AGENT_DB, this.env.AGENT_STORE, runId);
     await setRunStatus(this.env.AGENT_DB, runId, 'awaiting_review_candidate_extract', stage);
     return { stage, ...metrics };
   }
@@ -97,6 +98,40 @@ export class CultAgentOrchestrator extends Agent<Env, AgentState> {
   @callable()
   async getRun(runId: string): Promise<Record<string, unknown>> {
     return getRunSummary(this.env.AGENT_DB, runId);
+  }
+
+  @callable()
+  async deleteRun(runId: string): Promise<Record<string, unknown>> {
+    const deleted = await deleteRunData(this.env.AGENT_DB, runId);
+    if (!deleted.existed) {
+      return {
+        runId,
+        deleted: false,
+        message: 'Run not found',
+      };
+    }
+
+    let deletedR2Objects = 0;
+    for (const key of deleted.articleR2Keys) {
+      await this.env.AGENT_STORE.delete(key);
+      deletedR2Objects += 1;
+    }
+
+    if (this.state.activeRunId === runId) {
+      this.setState({ activeRunId: null });
+    }
+
+    return {
+      runId,
+      deleted: true,
+      deletedCandidates: deleted.deletedCandidates,
+      deletedReviews: deleted.deletedReviews,
+      deletedLogs: deleted.deletedLogs,
+      deletedGroups: deleted.deletedGroups,
+      deletedRuns: deleted.deletedRuns,
+      deletedR2Objects,
+      retainedSharedFeedCache: true,
+    };
   }
 
   @callable()

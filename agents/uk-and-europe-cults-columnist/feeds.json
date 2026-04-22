@@ -511,7 +511,7 @@
       "sourceFormat": "rss",
       "sourceCategory": "publisher-feed",
       "requiresUrlResolution": false,
-      "enabled": true,
+      "enabled": false,
       "language": "en"
     },
     {
@@ -551,7 +551,7 @@
       "sourceFormat": "rss",
       "sourceCategory": "publisher-feed",
       "requiresUrlResolution": false,
-      "enabled": true,
+      "enabled": false,
       "language": "en"
     },
     {
@@ -661,7 +661,7 @@
       "sourceFormat": "rss",
       "sourceCategory": "publisher-feed",
       "requiresUrlResolution": false,
-      "enabled": true,
+      "enabled": false,
       "language": "fr"
     },
     {
@@ -1081,7 +1081,7 @@
       "sourceFormat": "rss",
       "sourceCategory": "publisher-feed",
       "requiresUrlResolution": false,
-      "enabled": true,
+      "enabled": false,
       "language": "en"
     },
     {
@@ -1667,7 +1667,7 @@
     {
       "id": "koha-kosovo-xk",
       "title": "Koha Kosovo",
-      "url": "https://www.koha.net/?output=rss",
+      "url": "https://www.koha.net/rss",
       "sourceFormat": "rss",
       "sourceCategory": "publisher-feed",
       "requiresUrlResolution": false,
