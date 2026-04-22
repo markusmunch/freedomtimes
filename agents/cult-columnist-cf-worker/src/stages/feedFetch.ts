@@ -22,7 +22,7 @@ function addHours(iso: string, hours: number): string {
   return dt.toISOString();
 }
 
-export async function runFeedFetchStage(db: D1Database): Promise<{ fetched: number; failed: number }> {
+export async function runFeedFetchStage(db: D1Database, r2: R2Bucket): Promise<{ fetched: number; failed: number }> {
   const feeds = await listEnabledFeeds(db);
   let fetched = 0;
   let failed = 0;
@@ -41,7 +41,10 @@ export async function runFeedFetchStage(db: D1Database): Promise<{ fetched: numb
       const status = response.status;
 
       const cacheKey = await sha256Hex(feed.url);
-      const bodySha256 = await sha256Hex(body);
+      const r2Key = `feeds/${cacheKey}.xml`;
+
+      // Store XML in R2
+      await r2.put(r2Key, body);
 
       await insertFeedFetchCache(db, {
         cacheKey,
@@ -51,8 +54,7 @@ export async function runFeedFetchStage(db: D1Database): Promise<{ fetched: numb
         fetchedAt,
         expiresAt: addHours(fetchedAt, ttlHoursForStatus(status)),
         contentType: response.headers.get('content-type'),
-        body,
-        bodySha256,
+        r2Key,
       });
 
       if (status >= 200 && status < 300) {

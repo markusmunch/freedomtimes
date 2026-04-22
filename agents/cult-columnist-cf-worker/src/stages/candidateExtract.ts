@@ -1,27 +1,32 @@
 import { insertCandidates, listEnabledFeeds } from '../lib/db';
 import { parseFeedItems } from '../lib/rss';
 
-export async function runCandidateExtractStage(db: D1Database, runId: string): Promise<{ inserted: number }> {
+export async function runCandidateExtractStage(db: D1Database, r2: R2Bucket, runId: string): Promise<{ inserted: number }> {
   const feeds = await listEnabledFeeds(db);
   let inserted = 0;
 
   for (const feed of feeds) {
     const cacheEntry = await db
       .prepare(
-        `SELECT body, status
+        `SELECT r2_key, status
          FROM http_cache_entries
          WHERE request_url = ? AND expires_at > datetime('now')
          ORDER BY fetched_at DESC
          LIMIT 1`,
       )
       .bind(feed.url)
-      .first<{ body: string; status: number }>();
+      .first<{ r2_key: string; status: number }>();
 
     if (!cacheEntry || cacheEntry.status < 200 || cacheEntry.status >= 300) {
       continue;
     }
 
-    const items = parseFeedItems(cacheEntry.body)
+    // Fetch XML from R2
+    const xmlObj = await r2.get(cacheEntry.r2_key);
+    if (!xmlObj) continue;
+    const body = await xmlObj.text();
+
+    const items = parseFeedItems(body)
       .filter((item) => item.url.startsWith('http://') || item.url.startsWith('https://'))
       .map((item) => ({
         runId,

@@ -30,16 +30,15 @@ export async function insertFeedFetchCache(
     fetchedAt: string;
     expiresAt: string;
     contentType: string | null;
-    body: string;
-    bodySha256: string;
+    r2Key: string;
     cacheKey: string;
   },
 ): Promise<void> {
   await db
     .prepare(
       `INSERT OR REPLACE INTO http_cache_entries
-       (cache_key, request_url, final_url, status, fetched_at, expires_at, content_type, body, body_sha256, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+       (cache_key, request_url, final_url, status, fetched_at, expires_at, content_type, r2_key, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     )
     .bind(
       input.cacheKey,
@@ -49,8 +48,7 @@ export async function insertFeedFetchCache(
       input.fetchedAt,
       input.expiresAt,
       input.contentType,
-      input.body,
-      input.bodySha256,
+      input.r2Key,
     )
     .run();
 }

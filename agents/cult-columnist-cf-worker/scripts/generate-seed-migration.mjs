@@ -43,15 +43,16 @@ for (const feed of feeds) {
 }
 lines.push('');
 
-for (const host of allowedHosts) {
-  lines.push(`INSERT INTO source_hosts (host, list_type) VALUES (${sqlString(host.toLowerCase())}, 'allowed');`);
-}
-for (const host of excludedHosts) {
-  lines.push(`INSERT INTO source_hosts (host, list_type) VALUES (${sqlString(host.toLowerCase())}, 'excluded');`);
-}
-for (const host of watchlistSites) {
-  lines.push(`INSERT INTO source_hosts (host, list_type) VALUES (${sqlString(host.toLowerCase())}, 'watchlist');`);
-}
+const seenHosts = new Set();
+const insertHost = (host, listType) => {
+  const normalized = host.toLowerCase();
+  if (seenHosts.has(normalized)) return;
+  seenHosts.add(normalized);
+  lines.push(`INSERT INTO source_hosts (host, list_type) VALUES (${sqlString(normalized)}, '${listType}');`);
+};
+for (const host of allowedHosts) insertHost(host, 'allowed');
+for (const host of excludedHosts) insertHost(host, 'excluded');
+for (const host of watchlistSites) insertHost(host, 'watchlist');
 lines.push('');
 
 const addLanguageTerms = (map, termType, table) => {

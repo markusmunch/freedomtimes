@@ -37,6 +37,34 @@
 	],
 
 	"env": {
+		"local": {
+			"vars": {
+				"AUTH0_DOMAIN": "test.auth0.com",
+				"AUTH0_API_AUDIENCE": "https://api.freedomtimes.news",
+				"AUTH0_ROLES_CLAIM_NAMESPACE": "https://freedomtimes.news/roles"
+			},
+			"durable_objects": {
+				"bindings": [
+					{
+						"name": "ORCHESTRATOR",
+						"class_name": "CultAgentOrchestrator"
+					}
+				]
+			},
+			"d1_databases": [
+				{
+					"binding": "AGENT_DB",
+					"database_name": "cult-agent-db-local",
+					"database_id": "local"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "AGENT_STORE",
+					"bucket_name": "cult-agent-store-local"
+				}
+			]
+		},
 		"staging": {
 			"name": "cult-columnist-cf-worker-staging",
 			"vars": {

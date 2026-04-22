@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS http_cache_entries (
   fetched_at        TEXT NOT NULL,
   expires_at        TEXT NOT NULL,        -- TTL cutoff; cache entry is stale after this
   content_type      TEXT,
-  body              TEXT NOT NULL,
-  body_sha256       TEXT,
+  r2_key            TEXT NOT NULL,        -- R2 object key for feed XML
+  body_sha256       TEXT NOT NULL,        -- hash of XML for deduplication
   created_at        TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );

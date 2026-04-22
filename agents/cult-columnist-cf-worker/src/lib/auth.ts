@@ -42,6 +42,36 @@ export async function requireEditor(request: Request, env: Env): Promise<JWTPayl
 
   const token = authHeader.slice('Bearer '.length).trim();
 
+  // For local dev/testing: allow test tokens
+  if (env.AUTH0_DOMAIN === 'test.auth0.com') {
+    if (token === 'test-editor-token') {
+      return {
+        sub: 'test-user-editor',
+        [env.AUTH0_ROLES_CLAIM_NAMESPACE || 'roles']: ['editor'],
+        iat: Math.floor(Date.now() / 1000),
+      } as JWTPayload;
+    }
+    if (token === 'test-viewer-token') {
+      const viewerPayload = {
+        sub: 'test-user-viewer',
+        [env.AUTH0_ROLES_CLAIM_NAMESPACE || 'roles']: ['viewer'],
+        iat: Math.floor(Date.now() / 1000),
+      } as JWTPayload;
+      if (!hasEditorialRole(viewerPayload, env.AUTH0_ROLES_CLAIM_NAMESPACE)) {
+        throw new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return viewerPayload;
+    }
+    // Invalid test token
+    throw new Response(JSON.stringify({ error: 'Invalid token' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
   let payload: JWTPayload;
   try {
     const verified = await jwtVerify(token, getJwks(env.AUTH0_DOMAIN), {

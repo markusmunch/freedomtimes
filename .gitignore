@@ -47,3 +47,4 @@ web/.generated/archive-import/*
 .cookie
 secrets/*
 agents/uk-and-europe-cults-columnist/reports/*.html
+agents/cult-columnist-cf-worker/.wrangler/*
