@@ -1,0 +1,25 @@
+{
+  "name": "cult-columnist-cf-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Cloudflare Agent worker for UK/EU cult-news pipeline",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env staging --local",
+    "dev:remote-staging": "wrangler dev --env staging",
+    "deploy:staging": "wrangler deploy --env staging",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply AGENT_DB --env staging --local",
+    "db:migrate:staging": "wrangler d1 migrations apply AGENT_DB --env staging"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250422.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.12.0"
+  },
+  "dependencies": {
+    "agents": "^0.11.4",
+    "ai": "^6.0.168",
+    "jose": "^5.10.0"
+  }
+}
