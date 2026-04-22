@@ -10,11 +10,15 @@
     "deploy:staging": "wrangler deploy --env staging",
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply AGENT_DB --env staging --local",
-    "db:migrate:staging": "wrangler d1 migrations apply AGENT_DB --env staging"
+    "db:migrate:staging": "wrangler d1 migrations apply AGENT_DB --env staging",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250422.0",
+    "@vitest/ui": "^1.0.4",
     "typescript": "^5.9.3",
+    "vitest": "^1.0.4",
     "wrangler": "^4.12.0"
   },
   "dependencies": {

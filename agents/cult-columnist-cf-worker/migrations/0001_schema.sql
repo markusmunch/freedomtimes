@@ -18,21 +18,6 @@ CREATE TABLE IF NOT EXISTS runs (
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- ─── Stage review log ─────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS stage_reviews (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id       TEXT NOT NULL REFERENCES runs(id),
-  stage        TEXT NOT NULL,
-  signal       TEXT NOT NULL,             -- 'approve' | 'reject'
-  notes        TEXT,
-  reviewed_by  TEXT,                      -- JWT sub claim
-  isolate_id   INTEGER REFERENCES pipeline_isolates(id),
-  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_stage_reviews_run ON stage_reviews(run_id, stage);
-
 -- ─── RLHF isolates ────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS pipeline_isolates (
@@ -47,6 +32,21 @@ CREATE TABLE IF NOT EXISTS pipeline_isolates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_isolates_stage_active ON pipeline_isolates(stage, active);
+
+-- ─── Stage review log ─────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS stage_reviews (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id       TEXT NOT NULL REFERENCES runs(id),
+  stage        TEXT NOT NULL,
+  signal       TEXT NOT NULL,             -- 'approve' | 'reject'
+  notes        TEXT,
+  reviewed_by  TEXT,                      -- JWT sub claim
+  isolate_id   INTEGER REFERENCES pipeline_isolates(id),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_stage_reviews_run ON stage_reviews(run_id, stage);
 
 -- ─── Candidate stories ────────────────────────────────────────────────────────
 

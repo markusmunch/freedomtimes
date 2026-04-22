@@ -115,3 +115,61 @@ export async function purgeExpiredHttpCache(db: D1Database, nowIso: string): Pro
   const result = await db.prepare('DELETE FROM http_cache_entries WHERE expires_at <= ?').bind(nowIso).run();
   return Number(result.meta.changes ?? 0);
 }
+
+export async function logStageEvent(
+  db: D1Database,
+  input: {
+    runId: string;
+    stage: string;
+    level: 'info' | 'warn' | 'error';
+    message: string;
+    data?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const id = `${input.runId}:${input.stage}:${new Date().getTime()}:${Math.random().toString(36).slice(2, 9)}`;
+  await db
+    .prepare(
+      `INSERT INTO stage_logs (id, run_id, stage, level, message, data, logged_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+    )
+    .bind(
+      id,
+      input.runId,
+      input.stage,
+      input.level,
+      input.message,
+      input.data ? JSON.stringify(input.data) : null,
+    )
+    .run();
+}
+
+export async function getStageEvents(
+  db: D1Database,
+  runId: string,
+): Promise<
+  Array<{
+    id: string;
+    stage: string;
+    level: string;
+    message: string;
+    data: Record<string, unknown> | null;
+    logged_at: string;
+  }>
+> {
+  const result = await db
+    .prepare('SELECT id, stage, level, message, data, logged_at FROM stage_logs WHERE run_id = ? ORDER BY logged_at ASC')
+    .bind(runId)
+    .all<{
+      id: string;
+      stage: string;
+      level: string;
+      message: string;
+      data: string | null;
+      logged_at: string;
+    }>();
+
+  return (result.results ?? []).map((row) => ({
+    ...row,
+    data: row.data ? JSON.parse(row.data) : null,
+  }));
+}

@@ -1,6 +1,7 @@
 import { getAgentByName, routeAgentRequest } from 'agents';
 import type { Env, StageName } from './types';
 import { requireEditor } from './lib/auth';
+import { getStageEvents } from './lib/db';
 import { CultAgentOrchestrator } from './orchestrator';
 
 export { CultAgentOrchestrator };
@@ -33,6 +34,11 @@ function parseStageAction(pathname: string): { runId: string; stage: StageName; 
     stage: stageRaw,
     action: m[3].toLowerCase() as 'approve' | 'reject',
   };
+}
+
+function parseLogsPath(pathname: string): string | null {
+  const m = pathname.match(/^\/runs\/([^/]+)\/logs$/i);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
 }
 
 function isProtectedOperationalEndpoint(pathname: string, method: string): boolean {
@@ -112,6 +118,15 @@ export default {
 
         const result = await agent.rejectStage(parsed.runId, parsed.stage, notes, reviewedBy);
         return json(result, 202);
+      }
+
+      if (pathname.includes('/logs') && request.method === 'GET') {
+        const runId = parseLogsPath(pathname);
+        if (!runId) {
+          return json({ error: 'Invalid logs path' }, 400);
+        }
+        const events = await getStageEvents(env.AGENT_DB, runId);
+        return json({ runId, events });
       }
 
       return json({ error: 'Not found' }, 404);

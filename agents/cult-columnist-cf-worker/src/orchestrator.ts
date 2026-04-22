@@ -3,6 +3,7 @@ import type { Env, StageName } from './types';
 import {
   createRun,
   getRunSummary,
+  logStageEvent,
   purgeExpiredHttpCache,
   recordStageReview,
   setRunStatus,
@@ -51,8 +52,31 @@ export class CultAgentOrchestrator extends Agent<Env, AgentState> {
 
     const stageResult = await this.runFiber(`start-run:${runId}`, async (ctx) => {
       await createRun(this.env.AGENT_DB, runId);
+      await logStageEvent(this.env.AGENT_DB, {
+        runId,
+        stage: 'orchestration',
+        level: 'info',
+        message: 'run started',
+      });
+
       const purged = await purgeExpiredHttpCache(this.env.AGENT_DB, new Date().toISOString());
+      await logStageEvent(this.env.AGENT_DB, {
+        runId,
+        stage: 'orchestration',
+        level: 'info',
+        message: 'expired cache purged',
+        data: { purgedCount: purged },
+      });
+
       const stage = await this.runSingleStage(runId, 'feed_fetch');
+      await logStageEvent(this.env.AGENT_DB, {
+        runId,
+        stage: 'feed_fetch',
+        level: 'info',
+        message: 'feed_fetch completed',
+        data: stage,
+      });
+
       ctx.stash({ runId, stage: 'feed_fetch' });
       return { purgedExpiredHttpCache: purged, stage };
     });
@@ -85,6 +109,14 @@ export class CultAgentOrchestrator extends Agent<Env, AgentState> {
       reviewedBy,
     });
 
+    await logStageEvent(this.env.AGENT_DB, {
+      runId,
+      stage,
+      level: 'warn',
+      message: 'stage rejected',
+      data: { reviewedBy, notes },
+    });
+
     await setRunStatus(this.env.AGENT_DB, runId, 'failed', stage);
     return { runId, stage, signal: 'reject', status: 'failed' };
   }
@@ -99,15 +131,36 @@ export class CultAgentOrchestrator extends Agent<Env, AgentState> {
       reviewedBy,
     });
 
+    await logStageEvent(this.env.AGENT_DB, {
+      runId,
+      stage,
+      level: 'info',
+      message: 'stage approved',
+      data: { reviewedBy, notes },
+    });
+
     const transition = STAGE_FLOW[stage];
     if (!transition.next) {
       await setRunStatus(this.env.AGENT_DB, runId, 'published_draft', stage);
+      await logStageEvent(this.env.AGENT_DB, {
+        runId,
+        stage: 'orchestration',
+        level: 'info',
+        message: 'run completed (final stage)',
+      });
       return { runId, stage, signal: 'approve', status: 'published_draft' };
     }
 
     const nextStage = transition.next;
     const stageResult = await this.runFiber(`approve:${runId}:${stage}`, async (ctx) => {
       const result = await this.runSingleStage(runId, nextStage);
+      await logStageEvent(this.env.AGENT_DB, {
+        runId,
+        stage: nextStage,
+        level: 'info',
+        message: `${nextStage} completed`,
+        data: result,
+      });
       ctx.stash({ runId, stage: nextStage });
       return result;
     });
