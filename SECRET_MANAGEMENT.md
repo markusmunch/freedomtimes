@@ -16,9 +16,8 @@ CI/CD Automation Channels:
   ├─ terraform-staging.yml / terraform-production.yml
   └─ GitHub Actions variables propagate to Terraform
         ↓ (workflows execute during apply)
-Cloudflare Worker Secrets & Azure Resources
+Cloudflare Worker Secrets & Terraform-managed Resources
   ├─ Worker AUTH0_* secrets
-  ├─ Azure App Management config
   └─ Terraform-managed infrastructure
 ```
 
@@ -81,7 +80,7 @@ Cloudflare Worker Secrets & Azure Resources
 ```
 GitHub Secrets/Variables
   → Terraform Cloud (backend state)
-  → Azure resources & Cloudflare Workers
+  → Cloudflare/Auth0/Turso resources
   → Worker AUTH0_* secrets set via wrangler CLI
 ```
 

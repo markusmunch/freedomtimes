@@ -70,14 +70,10 @@ function Main {
 
         # Hardcoded list of sensitive values synced as GitHub Actions secrets.
         # Secrets are never logged by GitHub Actions and must never be displayed.
-        # Includes: Azure credentials (Terraform provider), Cloudflare API tokens, Auth0 management client,
+        # Includes: Cloudflare API tokens, Auth0 management client,
         # and Auth0 login app credentials for each environment.
         # See ENVIRONMENT_SETUP.md "Syncing Secrets & Variables" for the complete categorization rationale.
         $secrets = @(
-            "ARM_CLIENT_ID",
-            "ARM_CLIENT_SECRET",
-            "ARM_SUBSCRIPTION_ID",
-            "ARM_TENANT_ID",
             "TF_VAR_CLOUDFLARE_API_TOKEN",
             "TF_VAR_CLOUDFLARE_ACCOUNT_ID",
             "TF_VAR_CLOUDFLARE_ZONE_ID",
@@ -102,11 +98,10 @@ function Main {
 
         # Hardcoded list of non-sensitive configuration synced as GitHub Actions variables.
         # Variables are plaintext and visible to anyone with repo access.
-        # Includes: Terraform vars (Azure location and DNS routing), Auth0 configuration,
+        # Includes: Terraform routing vars, Auth0 configuration,
         # and app-specific settings (API modes, CORS origins, domain cookies).
         # See ENVIRONMENT_SETUP.md "Syncing Secrets & Variables" for the complete categorization rationale.
         $variables = @(
-            "TF_VAR_AZURE_LOCATION",
             "API_UPSTREAM_MODE",
             "AUTH0_API_AUDIENCE",
             "AUTH0_API_AUDIENCE_STAGING",

@@ -9,31 +9,12 @@ Terraform is not required for local application development. Local work can run 
 - Cloudflare holding page worker
 - Worker route attachment to a configured zone pattern
 - Auth0 application and RBAC resources
-- Azure editorial API foundation (Resource Group, Function App, Cosmos DB)
-- Azure Function EasyAuth with Auth0 OIDC
-- Azure API Management gateway policy for JWT validation and role claim enforcement
+- Turso database resources used by EmDash
 - Environment entrypoints for `production` and `staging`
-
-## API Auth Topology
-
-The intended topology for editorial API requests is:
-
-1. Browser sends HttpOnly auth cookie to APIM host (subdomain under the same parent domain).
-2. APIM policy extracts JWT from cookie and sets upstream `Authorization` header.
-3. APIM validates JWT audience and role claims.
-4. Azure Function EasyAuth validates the forwarded bearer token.
-
-This combines gateway policy control with EasyAuth defense in depth while avoiding JS-readable access tokens in the browser.
-
-Operational notes:
-
-- APIM CORS must be configured for credentialed requests with explicit origins.
-- APIM policy should sanitize inbound auth headers and only trust cookie-derived token input.
-- Keep EasyAuth enabled unless Function ingress is otherwise strongly restricted.
 
 ## Environment Separation Rule
 
-Terraform must maintain strict separation between staging and production for all providers (Cloudflare, Auth0, Azure).
+Terraform must maintain strict separation between staging and production for all providers (Cloudflare, Auth0, Turso).
 
 - Use separate environment entrypoints:
    - `environments/staging`
@@ -55,7 +36,6 @@ Auth0 shared ownership rule:
 - environments/auth0-shared: tenant-shared Auth0 entrypoint and variables
 - modules/cloudflare_holding_page: reusable module for holding page worker and route
 - modules/auth0_app: reusable module for Auth0 app and shared auth resources
-- modules/azure_editorial_api: reusable module for Azure editorial API resources
 
 ## Security
 
@@ -115,8 +95,8 @@ Important for this repository:
 ### Provider auth failures
 
 - Auth0 provider: set `TF_VAR_auth0_domain`, `TF_VAR_auth0_management_client_id`, and `TF_VAR_auth0_management_client_secret`.
-- Azure provider: set `ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, `ARM_SUBSCRIPTION_ID`, and `ARM_TENANT_ID`.
 - Cloudflare provider: set `TF_VAR_cloudflare_api_token`, `TF_VAR_cloudflare_account_id`, and `TF_VAR_cloudflare_zone_id`.
+- Turso provider: set `TF_VAR_turso_api_token` and `TF_VAR_turso_organization`.
 - Terraform Cloud auth: set shell env `TF_TOKEN_app_terraform_io`, or in GitHub use secret `TF_TOKEN_APP_TERRAFORM_IO`.
 
 ### Workspace lock errors
