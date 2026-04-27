@@ -233,6 +233,66 @@ function Set-Or-AddEnvFileValue {
     Set-Content -Path $Path -Value $lines -Encoding UTF8
 }
 
+function Expand-ResourceList {
+    param([string[]]$Values)
+
+    $expanded = New-Object System.Collections.Generic.List[string]
+    foreach ($value in $Values) {
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            continue
+        }
+
+        foreach ($part in ($value -split ',')) {
+            $trimmed = $part.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+                [void]$expanded.Add($trimmed)
+            }
+        }
+    }
+
+    return $expanded.ToArray()
+}
+
+function Remove-StaleAzureState {
+    param([string]$Env)
+
+    if ($Env -ne "staging" -and $Env -ne "production") {
+        return
+    }
+
+    Write-Host "DEBUG: Checking terraform state for stale Azure resources..." -ForegroundColor DarkGray
+
+    $stateListOutput = & terraform state list 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($stateListOutput | Out-String))) {
+        Write-Host "DEBUG: No readable terraform state list; skipping stale Azure cleanup." -ForegroundColor DarkGray
+        return
+    }
+
+    $stateEntries = @($stateListOutput | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $staleAzureEntries = $stateEntries | Where-Object {
+        $_ -match '^azurerm_' -or
+        $_ -match '^data\.azurerm_' -or
+        $_ -match '^module\.azure_editorial_api(\.|$)' -or
+        $_ -match '\.azurerm_'
+    }
+
+    if (-not $staleAzureEntries -or $staleAzureEntries.Count -eq 0) {
+        Write-Host "DEBUG: No stale Azure resources found in terraform state." -ForegroundColor DarkGray
+        return
+    }
+
+    Write-Warning "Removing stale Azure resources from terraform state to avoid azurerm provider errors..."
+    foreach ($address in $staleAzureEntries) {
+        Write-Host "DEBUG: terraform state rm $address" -ForegroundColor DarkGray
+        & terraform state rm $address 1>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to remove stale Azure state entry: $address"
+        }
+    }
+
+    Write-Host "DEBUG: Removed $($staleAzureEntries.Count) stale Azure state entries." -ForegroundColor DarkGray
+}
+
 function Sync-Auth0LoginAppEnvFromState {
     param(
         [string]$Env,
@@ -332,16 +392,18 @@ try {
     if ($Operation -eq "plan") {
         Write-Host "DEBUG: Running plan operation" -ForegroundColor DarkGray
         $targetArgs = @()
-        if ($Target) {
-            foreach ($resource in $Target) {
+        $targets = Expand-ResourceList -Values $Target
+        if ($targets) {
+            foreach ($resource in $targets) {
                 if (-not [string]::IsNullOrWhiteSpace($resource)) {
                     $targetArgs += "-target=$resource"
                 }
             }
         }
         $replaceArgs = @()
-        if ($Replace) {
-            foreach ($resource in $Replace) {
+        $replacements = Expand-ResourceList -Values $Replace
+        if ($replacements) {
+            foreach ($resource in $replacements) {
                 if (-not [string]::IsNullOrWhiteSpace($resource)) {
                     $replaceArgs += "-replace=$resource"
                 }
@@ -354,6 +416,7 @@ try {
 
     if ($Operation -eq "apply") {
         Write-Host "DEBUG: Running apply operation, AutoApprove=$AutoApprove, PlanFile=$PlanFile, UsePlanFile=$UsePlanFile" -ForegroundColor DarkGray
+        Remove-StaleAzureState -Env $Environment
         if ($UsePlanFile) {
             if (-not (Test-Path $PlanFile)) {
                 throw "Plan file '$PlanFile' not found. Run plan first or remove -UsePlanFile for direct apply."
@@ -366,16 +429,18 @@ try {
         if ($AutoApprove) {
             Write-Host "DEBUG: AutoApprove enabled, running apply with $($varArgs.Count) var args" -ForegroundColor DarkGray
             $targetArgs = @()
-            if ($Target) {
-                foreach ($resource in $Target) {
+            $targets = Expand-ResourceList -Values $Target
+            if ($targets) {
+                foreach ($resource in $targets) {
                     if (-not [string]::IsNullOrWhiteSpace($resource)) {
                         $targetArgs += "-target=$resource"
                     }
                 }
             }
             $replaceArgs = @()
-            if ($Replace) {
-                foreach ($resource in $Replace) {
+            $replacements = Expand-ResourceList -Values $Replace
+            if ($replacements) {
+                foreach ($resource in $replacements) {
                     if (-not [string]::IsNullOrWhiteSpace($resource)) {
                         $replaceArgs += "-replace=$resource"
                     }
@@ -406,8 +471,9 @@ try {
         }
 
         $targetArgs = @()
-        if ($Target) {
-            foreach ($resource in $Target) {
+        $targets = Expand-ResourceList -Values $Target
+        if ($targets) {
+            foreach ($resource in $targets) {
                 if (-not [string]::IsNullOrWhiteSpace($resource)) {
                     $targetArgs += "-target=$resource"
                 }
