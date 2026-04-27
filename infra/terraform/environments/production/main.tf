@@ -2,9 +2,11 @@ provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
+/*
 provider "azurerm" {
   features {}
 }
+*/
 
 provider "auth0" {
   # Management client credentials: used only for Terraform to manage Auth0 resources
@@ -46,6 +48,16 @@ resource "turso_database_token" "emdash" {
   expiration        = local.turso_database_token_expiration
 }
 
+import {
+  to = cloudflare_r2_bucket.media
+  id = "${var.cloudflare_account_id}/freedomtimes-media-production"
+}
+
+resource "cloudflare_r2_bucket" "media" {
+  account_id = var.cloudflare_account_id
+  name       = "freedomtimes-media-production"
+}
+
 module "cloudflare_holding_page" {
   source = "../../modules/cloudflare_holding_page"
 
@@ -85,6 +97,7 @@ module "auth0_app" {
   enable_machine_to_machine_grant = true
 }
 
+/*
 module "azure_editorial_api" {
   source = "../../modules/azure_editorial_api"
 
@@ -149,3 +162,4 @@ resource "azurerm_api_management_custom_domain" "editorial" {
 
   depends_on = [time_sleep.wait_for_api_custom_hostname_dns]
 }
+*/

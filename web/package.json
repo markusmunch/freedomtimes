@@ -9,21 +9,26 @@
     "dev": "astro dev",
     "build": "astro build && tsx scripts/patch-cloudflare-bundle.ts",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "archive:prepare": "tsx scripts/prepare-archive-assets.ts",
+    "archive:prepare:py": "c:/Users/jonbr/source/repos/freedomtimes-branch2/.venv/Scripts/python.exe scripts/prepare_archive_assets.py"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^13.1.8",
     "@astrojs/react": "^5.0.3",
-    "@emdash-cms/cloudflare": "^0.1.1",
+    "@emdash-cms/cloudflare": "^0.6.0",
     "@libsql/client": "^0.17.2",
     "@libsql/kysely-libsql": "^0.4.1",
     "astro": "^6.1.5",
-    "emdash": "^0.1.1",
+    "emdash": "^0.6.0",
     "jose": "^6.2.2",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^0.1.80",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^5.4.296",
     "tsx": "^4.20.6",
     "typescript": "^6.0.2"
   }
