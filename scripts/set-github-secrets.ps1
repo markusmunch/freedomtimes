@@ -71,7 +71,7 @@ function Main {
         # Hardcoded list of sensitive values synced as GitHub Actions secrets.
         # Secrets are never logged by GitHub Actions and must never be displayed.
         # Includes: Azure credentials (Terraform provider), Cloudflare API tokens, Auth0 management client,
-        # TLS certificates for custom domains, and Auth0 login app credentials for each environment.
+        # and Auth0 login app credentials for each environment.
         # See ENVIRONMENT_SETUP.md "Syncing Secrets & Variables" for the complete categorization rationale.
         $secrets = @(
             "ARM_CLIENT_ID",
@@ -84,10 +84,6 @@ function Main {
             "TF_VAR_AUTH0_DOMAIN",
             "TF_VAR_AUTH0_MANAGEMENT_CLIENT_ID",
             "TF_VAR_AUTH0_MANAGEMENT_CLIENT_SECRET",
-            "TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64_STAGING",
-            "TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD_STAGING",
-            "TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64_PRODUCTION",
-            "TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD_PRODUCTION",
             "AUTH0_LOGIN_APP_CLIENT_ID_STAGING",
             "AUTH0_LOGIN_APP_CLIENT_SECRET_STAGING",
             "AUTH0_LOGIN_APP_CLIENT_ID_PRODUCTION",
@@ -106,7 +102,7 @@ function Main {
 
         # Hardcoded list of non-sensitive configuration synced as GitHub Actions variables.
         # Variables are plaintext and visible to anyone with repo access.
-        # Includes: Terraform vars (Azure location, DNS routing, custom domains), Auth0 configuration,
+        # Includes: Terraform vars (Azure location and DNS routing), Auth0 configuration,
         # and app-specific settings (API modes, CORS origins, domain cookies).
         # See ENVIRONMENT_SETUP.md "Syncing Secrets & Variables" for the complete categorization rationale.
         $variables = @(
@@ -125,8 +121,6 @@ function Main {
             "TF_VAR_MANAGE_APEX_DNS_RECORD_PRODUCTION",
             "TF_VAR_APEX_DNS_RECORD_CONTENT_STAGING",
             "TF_VAR_APEX_DNS_RECORD_CONTENT_PRODUCTION",
-            "TF_VAR_API_CUSTOM_HOSTNAME_STAGING",
-            "TF_VAR_API_CUSTOM_HOSTNAME_PRODUCTION",
             "TF_VAR_WORKSPACE_URL_STAGING",
             "TF_VAR_WORKSPACE_URL_PRODUCTION",
             "TF_VAR_API_MANAGEMENT_ALLOWED_ORIGINS_STAGING",

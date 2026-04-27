@@ -48,13 +48,6 @@ jobs:
       TF_VAR_worker_name: ${{ vars.TF_VAR_WORKER_NAME_PRODUCTION }}
       TF_VAR_manage_apex_dns_record: ${{ vars.TF_VAR_MANAGE_APEX_DNS_RECORD_PRODUCTION }}
       TF_VAR_apex_dns_record_content: ${{ vars.TF_VAR_APEX_DNS_RECORD_CONTENT_PRODUCTION }}
-      TF_VAR_api_custom_hostname: ${{ vars.TF_VAR_API_CUSTOM_HOSTNAME_PRODUCTION }}
-      TF_VAR_api_custom_hostname_certificate_base64: ${{ secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64_PRODUCTION }}
-      TF_VAR_api_custom_hostname_certificate_password: ${{ secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD_PRODUCTION }}
-      # Keep CNAME unproxied during apply so Azure APIM can verify ownership.
-      # A targeted second apply re-proxies it after the custom domain is registered.
-      TF_VAR_api_custom_hostname_proxied: "false"
-      CERT_SECRETS_CONFIGURED: ${{ secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_BASE64_PRODUCTION != '' && secrets.TF_VAR_API_CUSTOM_HOSTNAME_CERTIFICATE_PASSWORD_PRODUCTION != '' }}
       TF_VAR_workspace_url: ${{ vars.TF_VAR_WORKSPACE_URL_PRODUCTION }}
       TF_VAR_auth0_api_identifier: ${{ vars.AUTH0_API_AUDIENCE }}
       TF_VAR_api_management_allowed_origins: ${{ vars.TF_VAR_API_MANAGEMENT_ALLOWED_ORIGINS_PRODUCTION }}
@@ -145,32 +138,6 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Adopt Existing API CNAME Record
-        if: env.CERT_SECRETS_CONFIGURED == 'true'
-        run: |
-          set -euo pipefail
-
-          RESOURCE_ADDR='cloudflare_record.api_custom_hostname[0]'
-          HOSTNAME="$TF_VAR_api_custom_hostname"
-
-          if terraform state show "$RESOURCE_ADDR" >/dev/null 2>&1; then
-            echo "Cloudflare API hostname record already tracked in Terraform state"
-            exit 0
-          fi
-
-          RECORD_ID=$(curl -sS \
-            -H "Authorization: Bearer $TF_VAR_cloudflare_api_token" \
-            "https://api.cloudflare.com/client/v4/zones/$TF_VAR_cloudflare_zone_id/dns_records?type=CNAME&name=$HOSTNAME" \
-            | jq -r '.result[0].id // empty')
-
-          if [ -z "$RECORD_ID" ]; then
-            echo "No existing Cloudflare CNAME for $HOSTNAME found; Terraform will create it"
-            exit 0
-          fi
-
-          echo "Importing existing Cloudflare DNS record into Terraform state"
-          terraform import -input=false "$RESOURCE_ADDR" "$TF_VAR_cloudflare_zone_id/$RECORD_ID"
-
       - name: Terraform Plan
         id: plan
         timeout-minutes: 20
@@ -250,16 +217,10 @@ jobs:
           set -euo pipefail
 
           AUTH0_APP_CLIENT_ID=$(terraform output -raw auth0_app_client_id 2>/dev/null || echo "")
-          API_BASE_URL=$(terraform output -raw azure_editorial_api_public_base_url 2>/dev/null || echo "")
-          FUNCTION_APP_NAME=$(terraform output -raw azure_function_app_name 2>/dev/null || echo "")
-          RESOURCE_GROUP_NAME=$(terraform output -raw azure_resource_group_name 2>/dev/null || echo "")
           TURSO_DATABASE_URL=$(terraform output -raw turso_database_url 2>/dev/null || echo "")
           TURSO_AUTH_TOKEN=$(terraform output -raw turso_database_auth_token 2>/dev/null || echo "")
 
           echo "auth0_app_client_id=$AUTH0_APP_CLIENT_ID" >> $GITHUB_OUTPUT
-          echo "api_base_url=$API_BASE_URL" >> $GITHUB_OUTPUT
-          echo "function_app_name=$FUNCTION_APP_NAME" >> $GITHUB_OUTPUT
-          echo "resource_group_name=$RESOURCE_GROUP_NAME" >> $GITHUB_OUTPUT
           echo "turso_database_url=$TURSO_DATABASE_URL" >> $GITHUB_OUTPUT
           echo "::add-mask::$TURSO_AUTH_TOKEN"
           echo "turso_auth_token=$TURSO_AUTH_TOKEN" >> $GITHUB_OUTPUT
@@ -289,23 +250,6 @@ jobs:
           echo "::add-mask::$AUTH0_APP_CLIENT_SECRET"
           echo "auth0_app_client_secret=$AUTH0_APP_CLIENT_SECRET" >> "$GITHUB_OUTPUT"
 
-      - name: Re-proxy API CNAME after Custom Domain Validation
-        if: >
-          env.CERT_SECRETS_CONFIGURED == 'true' &&
-          ((env.PRODUCTION_TERRAFORM_APPLY == 'true') ||
-           (github.event_name == 'workflow_dispatch' && github.event.inputs.production_terraform_apply == 'true'))
-        run: |
-          set -euo pipefail
-          echo "Flipping API CNAME back to proxied=true after APIM custom domain validation..."
-          terraform apply \
-            -input=false \
-            -lock-timeout=5m \
-            -no-color \
-            -auto-approve \
-            -var="api_custom_hostname_proxied=true" \
-            -target='cloudflare_record.api_custom_hostname[0]'
-          echo "API CNAME is now proxied."
-
       - name: Cleanup Terraform Plan File
         if: always()
         run: rm -f tfplan
@@ -317,47 +261,17 @@ jobs:
           cache: "npm"
           cache-dependency-path: |
             web/package-lock.json
-            functions/editorial-api/package-lock.json
-
-      - name: Install Function App Dependencies
-        working-directory: functions/editorial-api
-        run: npm ci
-
-      - name: Build Function App (TypeScript)
-        working-directory: functions/editorial-api
-        run: npm run build
-
-      - name: Azure Login for Function Deploy
-        if: steps.tf_outputs.outputs.function_app_name != '' && steps.tf_outputs.outputs.function_app_name != 'null'
-        uses: azure/login@v2
-        with:
-          creds: >-
-            {"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}
-
-      - name: Deploy Stub Azure Function App to Production
-        if: steps.tf_outputs.outputs.function_app_name != '' && steps.tf_outputs.outputs.function_app_name != 'null'
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ steps.tf_outputs.outputs.function_app_name }}
-          package: ./functions/editorial-api
-          remote-build: false
-          respect-funcignore: true
-
-      - name: Function App Deploy Complete
-        if: steps.tf_outputs.outputs.function_app_name != '' && steps.tf_outputs.outputs.function_app_name != 'null'
-        run: echo "Deploy Stub Azure Function App to Production completed successfully"
 
       - name: Validate Worker Runtime Vars
-        if: steps.tf_outputs.outputs.api_base_url != '' && steps.tf_outputs.outputs.api_base_url != 'null'
         run: |
           set -euo pipefail
-          API_BASE_URL="${{ steps.tf_outputs.outputs.api_base_url }}"
+          API_BASE_URL="${{ vars.API_BASE_URL_PRODUCTION || 'https://api.freedomtimes.news/editorial' }}"
           AUTH0_API_AUDIENCE="${{ vars.AUTH0_API_AUDIENCE || 'https://api.freedomtimes.news' }}"
           COOKIE_BASE_DOMAIN="${{ vars.COOKIE_BASE_DOMAIN }}"
           AUTH0_ROLES_CLAIM_NAMESPACE="${{ vars.AUTH0_ROLES_CLAIM_NAMESPACE }}"
 
           if [ -z "$API_BASE_URL" ] || [ "$API_BASE_URL" = "null" ]; then
-            echo "Missing required Terraform output: azure_editorial_api_public_base_url"
+            echo "Missing required repository var/default for API_BASE_URL"
             exit 1
           fi
 
@@ -412,13 +326,12 @@ jobs:
           npm run build
 
       - name: Deploy Astro Worker to Production
-        if: steps.tf_outputs.outputs.api_base_url != '' && steps.tf_outputs.outputs.api_base_url != 'null'
         working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.TF_VAR_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TF_VAR_CLOUDFLARE_ACCOUNT_ID }}
           AUTH0_API_AUDIENCE: ${{ vars.AUTH0_API_AUDIENCE || 'https://api.freedomtimes.news' }}
-          API_BASE_URL: ${{ steps.tf_outputs.outputs.api_base_url }}
+          API_BASE_URL: ${{ vars.API_BASE_URL_PRODUCTION || 'https://api.freedomtimes.news/editorial' }}
           COOKIE_BASE_DOMAIN: ${{ vars.COOKIE_BASE_DOMAIN }}
           AUTH0_ROLES_CLAIM_NAMESPACE: ${{ vars.AUTH0_ROLES_CLAIM_NAMESPACE }}
           API_UPSTREAM_MODE: ${{ vars.API_UPSTREAM_MODE }}
@@ -431,7 +344,6 @@ jobs:
           --var API_UPSTREAM_MODE:$API_UPSTREAM_MODE
 
       - name: Set Worker Secrets for Production
-        if: steps.tf_outputs.outputs.api_base_url != '' && steps.tf_outputs.outputs.api_base_url != 'null'
         working-directory: web
         # Cloudflare Worker secrets are synced here from Terraform outputs and Auth0 Management API.
         # Auth0 login app credentials come from the Terraform-managed application.
