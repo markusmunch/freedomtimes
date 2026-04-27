@@ -8,6 +8,7 @@ This runbook documents the repeatable process for getting verified staging conte
 - Verify items are truly published (not draft-only).
 - Recover from stale manifest cache issues such as `Collection "archives" not found`.
 - For `archives`, validate associated media assets are present in production before go-live.
+- Prevent content corruption during promotion by using UTF-8-safe transfer and explicit staging-versus-production content checks.
 
 ## Staging Policy
 
@@ -20,6 +21,7 @@ This runbook documents the repeatable process for getting verified staging conte
 2. EmDash API token for staging and production.
 3. Collection schema parity between staging and production.
 4. A Turso rollback branch has been created for production before any migration or production content promotion.
+5. The promotion path being used is scripted and UTF-8-safe. Do not use manual copy/paste or ad hoc terminal redirection for content payloads.
 
 Set local env vars before running commands:
 
@@ -98,10 +100,16 @@ Recommended operational pattern:
 2. Create or update same slug in production using JSON file input.
 3. Publish in production.
 
+Hard rule:
+
+- Do not manually copy JSON between terminals, editors, clipboards, or shell redirection steps when promoting content.
+- Use a scripted UTF-8-safe export/import path only.
+- If the promotion path cannot prove UTF-8 preservation, do not use it for production.
+
 Example:
 
 ```powershell
-# 1) Export source JSON data (manually copy to file or script this in automation)
+# 1) Export source JSON data using a scripted UTF-8-safe path
 npx emdash content get posts example-post -u $env:EMDASH_STAGING_URL -t $env:EMDASH_STAGING_TOKEN --json
 
 # 2) Create in production (or update existing item)
@@ -118,6 +126,21 @@ Notes:
 
 - `archives` usually include media references; ensure required files exist in production media storage.
 - If create fails because slug exists, use `content get` on production and then `content update ... --rev <token>`.
+
+Required content-integrity rule:
+
+- Before publishing production content, compare the staged source fields with the production fields that matter for rendering.
+- At minimum compare `title`, `abstract`, `excerpt`, `description`, and any other text fields rendered on the public route.
+- Fail the promotion if production text differs from staging text unexpectedly.
+- Treat mojibake signatures such as `ΓÇ`, `â€™`, `â€œ`, `â€`, or `╬ô├ç├û` as a hard stop.
+
+Minimum integrity verification after create/update and before sign-off:
+
+```powershell
+# Read back the production item and compare text-bearing fields with staging
+npx emdash content get posts example-post -u $env:EMDASH_STAGING_URL -t $env:EMDASH_STAGING_TOKEN --json
+npx emdash content get posts example-post --published -u $env:EMDASH_PRODUCTION_URL -t $env:EMDASH_PRODUCTION_TOKEN --json
+```
 
 ## 4. Archives Media/R2 Preflight (Required for Archives Releases)
 
@@ -138,6 +161,7 @@ npx --prefix web emdash media upload .\path\to\asset.png --alt "Archive asset" -
 Operational rule:
 
 - Do not mark an archives release complete until all referenced media records resolve in production and the corresponding archive pages render with working image/file links.
+- Do not mark an archives release complete until rendered archive text also matches staging for the promoted fields and contains no mojibake.
 
 ## 5. Recover From "Collection not found" Manifest Issues
 
@@ -170,3 +194,5 @@ After this, reload admin and re-test the collection route.
 4. Production `--published` read returns expected content.
 5. Public route renders expected page.
 6. For archives, media links and downloadable file URLs work.
+7. Staging-versus-production text-bearing fields were compared for the promoted items.
+8. No mojibake signatures appear in production content or on the rendered public route.

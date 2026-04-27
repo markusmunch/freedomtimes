@@ -163,6 +163,13 @@ Follow [web/CONTENT_PROMOTION_RUNBOOK.md](web/CONTENT_PROMOTION_RUNBOOK.md) for 
 
 No content migration or content promotion starts until the rollback branch exists and Step 1 is complete.
 
+This includes content-integrity controls, not just content existence:
+
+1. Promotion must use a scripted UTF-8-safe path.
+2. Manual copy/paste or ad hoc shell transfer of JSON payloads is not an approved production method.
+3. Promoted text-bearing fields must be compared between staging and production before release sign-off.
+4. Mojibake signatures such as `ΓÇ`, `â€™`, `â€œ`, `â€`, or `╬ô├ç├û` are release blockers.
+
 Minimal single-item example:
 
 ```powershell
@@ -209,6 +216,8 @@ npx --prefix web emdash media upload .\path\to\asset.png --alt "Archive cover" -
 4. Promoted content is `--published` in production.
 5. Public routes render updated content without fallback/manual repair.
 6. For archives releases, linked media renders correctly and downloadable assets resolve from production.
+7. For promoted content, staging and production text-bearing fields match for the released items.
+8. No mojibake signatures appear in production content or rendered pages.
 
 ## 6. Rollback Strategy
 

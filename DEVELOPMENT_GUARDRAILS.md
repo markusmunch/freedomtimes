@@ -40,4 +40,6 @@ These guardrails define how ticket work moves from development to production.
 - Use `./scripts/promote-schema-to-production.ps1 -AllowProduction -DryRun` to verify parity and `./scripts/promote-schema-to-production.ps1 -AllowProduction` to apply missing schema changes.
 - Before any non-dry-run production schema change, migration, or content promotion, a Turso rollback branch must be created and recorded.
 - The script is not the full gate by itself. Manual review must also confirm collection metadata parity and that the production manifest/admin route expose the touched collections.
+- Content promotion is not approved if it relies on manual copy/paste or any path that does not preserve UTF-8 payloads end to end.
+- For promoted items, manual review must also confirm staging-versus-production parity for rendered text-bearing fields and reject mojibake signatures.
 - The production Worker deploy from `main` is allowed only after this full Step 1 gate is confirmed, because the deployed code may reference fields or collection behavior that do not yet exist in production.
