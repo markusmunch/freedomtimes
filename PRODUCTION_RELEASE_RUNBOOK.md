@@ -97,13 +97,24 @@ Plan-only dry path:
 .\scripts\production-release.ps1 -TerraformMode plan -Watch -AllowProduction
 ```
 
-## 3. Promote EmDash Schema Changes
+## 3. Step 1: Prove Production Matches Staging Schema Semantics
 
 Schema changes are made on staging during development, not during the release. By release time, staging schema is already validated.
 
-Operational rule: if the branch contains code that expects new collections or fields, production schema parity must be confirmed here before closing the PR or allowing the `main` deploy to become the source of truth.
+Step 1 of the production release is not merely "verify schema parity". Step 1 is to prove that production matches staging in the ways that actually control runtime behavior before any content promotion or dependent deploy is treated as safe.
 
-This step diffs staging vs production, presents the required CLI commands for human review, then applies them after explicit confirmation.
+Operational rule: if the branch contains code that expects new collections, fields, or collection behavior, production must match staging here before closing the PR or allowing the `main` deploy to become the source of truth.
+
+What must match before proceeding:
+
+1. Collection existence and field definitions.
+2. Collection-level metadata and behavior, especially values such as `source`, `supports`, labels, and any collection settings that affect runtime/editor behavior.
+3. Production manifest visibility for the touched collection.
+4. Production admin route resolution for the touched collection.
+
+This incident proved that field-level parity alone is insufficient. A collection can exist in both environments and still behave differently because collection metadata drifted or the persisted manifest cache is stale.
+
+The schema promotion script is still useful, but it is only one part of Step 1. It diffs staging vs production, presents the required CLI commands for human review, then applies additive changes after explicit confirmation.
 
 ```powershell
 .\scripts\promote-schema-to-production.ps1 -AllowProduction
@@ -118,6 +129,8 @@ The script will:
 5. Warn about fields/collections present in production but absent in staging (never removes anything automatically).
 6. Stop immediately on the first failure and report partial state.
 
+The script does not currently prove collection metadata parity. It should be treated as an additive diff tool, not as the full Step 1 gate.
+
 Dry-run (diff only, no apply):
 
 ```powershell
@@ -125,6 +138,20 @@ Dry-run (diff only, no apply):
 ```
 
 Destructive operations (`schema delete`, `remove-field`) are never generated. If production has extra fields or collections that need removing, do that manually with the EmDash CLI after reviewing the diff output.
+
+Required manual checks after the diff and before content promotion:
+
+```powershell
+# Confirm collection metadata in both environments
+npx --prefix web emdash schema get archives -u $env:EMDASH_STAGING_URL -t $env:EMDASH_STAGING_TOKEN --json
+npx --prefix web emdash schema get archives -u $env:EMDASH_PRODUCTION_URL -t $env:EMDASH_PRODUCTION_TOKEN --json
+```
+
+Then verify runtime visibility in production:
+
+1. `/_emdash/api/manifest` contains the collection.
+2. `/_emdash/admin/content/<collection>` resolves.
+3. If manifest visibility is wrong even though schema looks correct, clear `emdash:manifest_cache` and re-check before promoting content.
 
 ## 4. Promote EmDash Content Changes
 

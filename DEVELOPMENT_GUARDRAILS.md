@@ -36,6 +36,7 @@ These guardrails define how ticket work moves from development to production.
 
 ## PR Merge Criteria For EmDash-Dependent Changes
 
-- If the branch changes code that depends on EmDash collections or fields, do not merge until production schema matches staging for the touched collections.
+- If the branch changes code that depends on EmDash collections or fields, do not merge until production matches staging for the touched collections in both schema semantics and manifest visibility.
 - Use `./scripts/promote-schema-to-production.ps1 -AllowProduction -DryRun` to verify parity and `./scripts/promote-schema-to-production.ps1 -AllowProduction` to apply missing schema changes.
-- The production Worker deploy from `main` is allowed only after schema parity is confirmed, because the deployed code may reference fields that do not yet exist in production.
+- The script is not the full gate by itself. Manual review must also confirm collection metadata parity and that the production manifest/admin route expose the touched collections.
+- The production Worker deploy from `main` is allowed only after this full Step 1 gate is confirmed, because the deployed code may reference fields or collection behavior that do not yet exist in production.

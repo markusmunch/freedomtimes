@@ -29,13 +29,25 @@ $env:EMDASH_STAGING_TOKEN = "<staging-token>"
 $env:EMDASH_PRODUCTION_TOKEN = "<production-token>"
 ```
 
-## 1. Verify Schema Parity First
+## 1. Step 1: Prove Production Matches Staging Before Content Promotion
 
-Schema changes are made on staging during development. By release time, staging schema should already be valid. This step confirms production matches staging before promoting content — mismatched schemas will cause content create/update to fail.
+Schema changes are made on staging during development. By release time, staging schema should already be valid.
+
+Step 1 is not just a field check. Step 1 is to prove that production matches staging in schema semantics and runtime visibility before promoting any content.
+
+What must be true before content promotion begins:
+
+1. The collection exists in production.
+2. Field definitions match staging.
+3. Collection-level metadata and behavior match staging, especially `source`, `supports`, labels, and other collection settings that affect runtime/editor behavior.
+4. The collection appears in the production manifest.
+5. The production admin collection route resolves.
+
+If any of those fail, stop. Fix schema or manifest state first. Content promotion is not the step that should reveal schema drift.
 
 Release rule: if a PR contains code or content promotion that depends on EmDash schema, do not close the PR and do not allow the `main` deployment until this parity check passes or the missing schema has been applied to production.
 
-From `web/`, verify the collection fields match in both environments:
+From `web/`, verify the collection exists and inspect it in both environments:
 
 ```powershell
 npx emdash schema list -u $env:EMDASH_STAGING_URL -t $env:EMDASH_STAGING_TOKEN --json
@@ -45,7 +57,13 @@ npx emdash schema get archives -u $env:EMDASH_STAGING_URL -t $env:EMDASH_STAGING
 npx emdash schema get archives -u $env:EMDASH_PRODUCTION_URL -t $env:EMDASH_PRODUCTION_TOKEN --json
 ```
 
-Do not promote content until collection fields match.
+Do not promote content until collection fields and collection metadata match.
+
+Then verify runtime visibility in production:
+
+1. `/_emdash/api/manifest` contains the collection.
+2. `/_emdash/admin/content/<collection>` resolves.
+3. If schema appears correct but the collection is missing from the manifest or admin route, treat that as a manifest cache problem and fix it before any content promotion.
 
 ## 2. Confirm Staging Item Is Actually Published
 
