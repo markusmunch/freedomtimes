@@ -38,5 +38,6 @@ These guardrails define how ticket work moves from development to production.
 
 - If the branch changes code that depends on EmDash collections or fields, do not merge until production matches staging for the touched collections in both schema semantics and manifest visibility.
 - Use `./scripts/promote-schema-to-production.ps1 -AllowProduction -DryRun` to verify parity and `./scripts/promote-schema-to-production.ps1 -AllowProduction` to apply missing schema changes.
+- Before any non-dry-run production schema change, migration, or content promotion, a Turso rollback branch must be created and recorded.
 - The script is not the full gate by itself. Manual review must also confirm collection metadata parity and that the production manifest/admin route expose the touched collections.
 - The production Worker deploy from `main` is allowed only after this full Step 1 gate is confirmed, because the deployed code may reference fields or collection behavior that do not yet exist in production.

@@ -40,9 +40,9 @@ $env:EMDASH_STAGING_TOKEN = "<staging-token>"
 $env:EMDASH_PRODUCTION_TOKEN = "<production-token>"
 ```
 
-## 1. Create Turso Rollback Checkpoint (Recommended Before Every Production Apply)
+## 1. Create Turso Rollback Checkpoint (Mandatory Before Production Schema Or Content Changes)
 
-Yes, this should be done before production deployments.
+This is mandatory before any production schema change, migration, or content promotion.
 
 Why:
 
@@ -50,7 +50,7 @@ Why:
 2. If a deployment introduces bad schema/data state, you can quickly move production runtime back to the checkpoint database.
 3. This reduces data rollback risk compared with trying to manually reverse multiple changes under pressure.
 
-Create a checkpoint branch from the production database:
+Create a checkpoint branch from the production database before doing anything else:
 
 ```powershell
 .\scripts\turso-create-rollback-branch.ps1 -ProductionDatabaseName <production-database-name> -AllowProduction
@@ -74,6 +74,8 @@ Important Turso behavior:
 1. Branches are separate databases and do not auto-merge back.
 2. You need branch-specific credentials (token/group token) to connect.
 3. Delete old rollback branches after the release stabilizes to avoid quota sprawl.
+
+Do not proceed to schema promotion or content promotion unless this checkpoint exists.
 
 ## 2. Deploy Code, Layout, EmDash Runtime, and Terraform
 
@@ -116,8 +118,10 @@ This incident proved that field-level parity alone is insufficient. A collection
 
 The schema promotion script is still useful, but it is only one part of Step 1. It diffs staging vs production, presents the required CLI commands for human review, then applies additive changes after explicit confirmation.
 
+No production schema mutation is allowed unless the rollback checkpoint from Step 1 already exists.
+
 ```powershell
-.\scripts\promote-schema-to-production.ps1 -AllowProduction
+.\scripts\promote-schema-to-production.ps1 -AllowProduction -RollbackMetadataFile .\.release\rollback-branches\<timestamp>-<rollback-db>.json
 ```
 
 The script will:
@@ -156,6 +160,8 @@ Then verify runtime visibility in production:
 ## 4. Promote EmDash Content Changes
 
 Follow [web/CONTENT_PROMOTION_RUNBOOK.md](web/CONTENT_PROMOTION_RUNBOOK.md) for staging-to-production content promotion.
+
+No content migration or content promotion starts until the rollback branch exists and Step 1 is complete.
 
 Minimal single-item example:
 

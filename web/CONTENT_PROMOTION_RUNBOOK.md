@@ -19,6 +19,7 @@ This runbook documents the repeatable process for getting verified staging conte
 1. Node dependencies installed in `web/` (`npm install`).
 2. EmDash API token for staging and production.
 3. Collection schema parity between staging and production.
+4. A Turso rollback branch has been created for production before any migration or production content promotion.
 
 Set local env vars before running commands:
 
@@ -44,6 +45,8 @@ What must be true before content promotion begins:
 5. The production admin collection route resolves.
 
 If any of those fail, stop. Fix schema or manifest state first. Content promotion is not the step that should reveal schema drift.
+
+This step also requires that a production rollback branch already exists. Never start migration into production without taking that checkpoint first.
 
 Release rule: if a PR contains code or content promotion that depends on EmDash schema, do not close the PR and do not allow the `main` deployment until this parity check passes or the missing schema has been applied to production.
 

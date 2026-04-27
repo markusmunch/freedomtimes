@@ -23,6 +23,10 @@
     EmDash production API token (or set EMDASH_PRODUCTION_TOKEN). If omitted, the script
     falls back to the token stored by `emdash login`.
 
+.PARAMETER RollbackMetadataFile
+    Path to the rollback metadata JSON produced by `turso-create-rollback-branch.ps1`.
+    Required for non-dry-run production schema changes.
+
 .PARAMETER DryRun
     Print the diff and generated commands but do not apply anything.
 
@@ -40,6 +44,7 @@ param(
     [string]$StagingToken  = $env:EMDASH_STAGING_TOKEN,
     [string]$ProductionUrl = $env:EMDASH_PRODUCTION_URL,
     [string]$ProductionToken = $env:EMDASH_PRODUCTION_TOKEN,
+    [string]$RollbackMetadataFile,
 
     [switch]$DryRun,
     [switch]$AllowProduction
@@ -53,6 +58,31 @@ $ErrorActionPreference = "Stop"
 if (-not $AllowProduction) {
     Write-Error "Pass -AllowProduction to confirm you intend to diff/apply to production."
     exit 1
+}
+
+if (-not $DryRun -and [string]::IsNullOrWhiteSpace($RollbackMetadataFile)) {
+    Write-Error "Non-dry-run schema promotion requires -RollbackMetadataFile from a pre-created Turso rollback branch."
+    exit 1
+}
+
+if (-not $DryRun) {
+    if (-not (Test-Path $RollbackMetadataFile)) {
+        Write-Error "Rollback metadata file not found: $RollbackMetadataFile"
+        exit 1
+    }
+
+    try {
+        $rollbackMetadata = Get-Content -Path $RollbackMetadataFile -Raw | ConvertFrom-Json
+    }
+    catch {
+        Write-Error "Failed to read rollback metadata JSON from $RollbackMetadataFile. $_"
+        exit 1
+    }
+
+    if ([string]::IsNullOrWhiteSpace($rollbackMetadata.rollbackDatabase)) {
+        Write-Error "Rollback metadata file does not contain rollbackDatabase. Refusing to apply production schema changes."
+        exit 1
+    }
 }
 
 foreach ($param in @(
@@ -272,6 +302,8 @@ if ($DryRun) {
 
 Write-Host "── Review the commands above carefully before proceeding. ──" -ForegroundColor Magenta
 Write-Host ""
+Write-Host "Rollback checkpoint: $($rollbackMetadata.rollbackDatabase)" -ForegroundColor Magenta
+Write-Host "Metadata file: $RollbackMetadataFile" -ForegroundColor Magenta
 Write-Host "Remove any commands you do not want applied, or abort now." -ForegroundColor Magenta
 Write-Host ""
 $confirm = Read-Host "Apply all $($pendingCommands.Count) command(s) to production? [yes/no]"
