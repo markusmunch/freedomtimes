@@ -50,9 +50,7 @@ Each environment includes:
    ```
 
 2. **Environment files ready:**
-   - `.env.dev` (shared credentials)
-   - `.env.staging` (staging-only values)
-   - `.env.production` (production-only values)
+   - `.env.dev` (credentials and variables used by local scripts)
 
    See [.env.dev.example section below](#env-dev-example) for what to include.
 
@@ -119,11 +117,8 @@ terraform -chdir=infra/terraform/environments/staging state list  # No output
 #### Step 1: Load Environment Variables
 
 ```bash
-# Load .env.dev, .env.staging, and merge into process environment
+# Load .env.dev into process environment
 Get-Content .env.dev | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' -and $_ -notmatch '^#' } | ForEach-Object { $p = $_ -split '=',2; [System.Environment]::SetEnvironmentVariable($p[0].Trim(), $p[1].Trim(), 'Process') }
-
-# If deploying production, also load .env.production
-Get-Content .env.production | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' -and $_ -notmatch '^#' } | ForEach-Object { $p = $_ -split '=',2; [System.Environment]::SetEnvironmentVariable($p[0].Trim(), $p[1].Trim(), 'Process') }
 ```
 
 #### Step 2: Initialize Terraform
@@ -184,7 +179,7 @@ After Terraform apply completes, sync Auth0 credentials to the Cloudflare Worker
 ```
 
 This script:
-1. Reads Auth0 login app credentials from `.env.dev` + `.env.staging/.env.production`
+1. Reads Auth0 login app credentials from `.env.dev`
 2. Uploads them to Cloudflare Worker via `npx wrangler secret put`
 
 #### Step 5: Deploy the Function App
@@ -224,6 +219,52 @@ npx wrangler deploy --config wrangler.jsonc --env production
 ### Local → GitHub Sync
 
 Use `scripts/set-github-secrets.ps1` to push secrets and variables to GitHub Actions.
+
+`set-github-secrets.ps1` reads sync inputs from `.env.dev`.
+
+For Android push credentials, do not generate service-account keys during deploy/apply. Prepare them locally in `.env.dev`, then use the existing secret-sync flow.
+
+#### Preparing Android FCM credentials locally
+
+Use `scripts/populate-android-fcm-env.ps1` to populate the Android FCM entries in `.env.dev` from a Google service-account JSON key. The script can either read an existing JSON key file or ask `gcloud` to generate a temporary key for an existing service account.
+
+Examples:
+
+```powershell
+# Staging: generate a temporary key via gcloud for an existing service account,
+# write PUSH_STAGING_ANDROID_FCM_* into .env.dev, then delete the temp key file.
+.\scripts\populate-android-fcm-env.ps1 `
+  -Target Staging `
+  -ProjectId <firebase-project-id> `
+  -ServiceAccountEmail <service-account-email>
+
+# Production: reuse an existing downloaded JSON key file.
+.\scripts\populate-android-fcm-env.ps1 `
+  -Target Production `
+  -JsonKeyPath C:\path\to\firebase-service-account.json
+```
+
+After that, push the values outward using the normal sync commands:
+
+```powershell
+.\scripts\set-github-secrets.ps1 -Target Staging -SyncCloudflareWorkerSecrets
+
+.\scripts\set-github-secrets.ps1 `
+  -Target Production `
+  -SyncCloudflareWorkerSecrets `
+  -AllowProduction
+```
+
+If you also need GitHub Actions to hold the same values, run:
+
+```powershell
+.\scripts\set-github-secrets.ps1 `
+  -Target Production `
+  -SyncGitHubSecretsAndVars `
+  -AllowProduction
+```
+
+`set-github-secrets.ps1` now refuses to sync unresolved placeholder values like `<firebase-project-id>` so bad values do not get pushed to Cloudflare or GitHub.
 
 #### Prerequisites
 
