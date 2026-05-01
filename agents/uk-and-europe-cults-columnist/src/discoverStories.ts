@@ -72,17 +72,45 @@ function loadFeedDefinitions(): FeedDefinition[] {
 const FEEDS = loadFeedDefinitions();
 
 const MAX_WATCHLIST_GOOGLE_QUERIES_PER_RUN = 28;
+const CLUSTER_EXPANSION_ENABLED = (process.env.CLUSTER_EXPANSION_ENABLED ?? 'true').toLowerCase() !== 'false';
+const CLUSTER_EXPANSION_MIN_CLUSTER_SIZE = Math.max(
+  2,
+  Number.parseInt(process.env.CLUSTER_EXPANSION_MIN_CLUSTER_SIZE ?? '3', 10) || 3,
+);
+const CLUSTER_EXPANSION_MIN_SCORE = Math.max(
+  1,
+  Number.parseInt(process.env.CLUSTER_EXPANSION_MIN_SCORE ?? '70', 10) || 70,
+);
+const CLUSTER_EXPANSION_MAX_CLUSTERS = Math.max(
+  1,
+  Number.parseInt(process.env.CLUSTER_EXPANSION_MAX_CLUSTERS ?? '2', 10) || 2,
+);
+const CLUSTER_EXPANSION_MAX_QUERIES_PER_CLUSTER = Math.max(
+  1,
+  Number.parseInt(process.env.CLUSTER_EXPANSION_MAX_QUERIES_PER_CLUSTER ?? '3', 10) || 3,
+);
+const CLUSTER_EXPANSION_MAX_TOTAL_QUERIES = Math.max(
+  1,
+  Number.parseInt(process.env.CLUSTER_EXPANSION_MAX_TOTAL_QUERIES ?? '6', 10) || 6,
+);
 
 const NEWSDATA_ENABLED = (process.env.NEWSDATA_ENABLED ?? 'false').toLowerCase() === 'true';
 const NEWSIO_API_KEY = process.env.NEWSIO_API_KEY ?? process.env.NEWSDATA_API_KEY;
 const NEWSDATA_BASE_URL = 'https://newsdata.io/api/1/latest';
 const NEWSDATA_QUERY_LIMIT = 10;
-const DEFAULT_DISCOVERY_MAX_AGE_HOURS = 24;
-const DISCOVERY_MAX_AGE_HOURS = Math.max(
-  1,
-  Number.parseInt(process.env.DISCOVERY_MAX_AGE_HOURS ?? `${DEFAULT_DISCOVERY_MAX_AGE_HOURS}`, 10) ||
-    DEFAULT_DISCOVERY_MAX_AGE_HOURS,
-);
+const DISCOVERY_MAX_AGE_HOURS = (() => {
+  const raw = process.env.DISCOVERY_MAX_AGE_HOURS?.trim();
+  if (!raw) {
+    throw new Error('DISCOVERY_MAX_AGE_HOURS must be provided as runtime input');
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error('DISCOVERY_MAX_AGE_HOURS must be a positive integer');
+  }
+
+  return parsed;
+})();
 const DEFAULT_DISCOVERY_PUBLISHED_AT_LOOKUP_LIMIT = 120;
 const DISCOVERY_PUBLISHED_AT_LOOKUP_LIMIT = Math.max(
   0,
@@ -131,6 +159,12 @@ function rotateArray<T>(items: T[], offset: number): T[] {
 }
 
 const CULT_TERMS = ALL_CULT_TERMS;
+const CLUSTER_TOKEN_STOPWORDS = new Set([
+  'with', 'from', 'that', 'this', 'after', 'under', 'about', 'into', 'over', 'more', 'than', 'have',
+  'been', 'were', 'their', 'they', 'them', 'will', 'what', 'where', 'which', 'while', 'during',
+  'religious', 'group', 'groups', 'sect', 'sects', 'cult', 'cults', 'slavery', 'raid', 'raids', 'police',
+  'investigation', 'members', 'people', 'arrested', 'bail', 'charged', 'allegations',
+]);
 
 function decodeXml(text: string): string {
   return text
@@ -715,13 +749,126 @@ async function decodeGoogleNewsWrapperUrl(url: string): Promise<string | undefin
 }
 
 async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
-  const discovered: DiscoveredStory[] = [];
-  const seen = new Set<string>();
   const watchlistQueries = buildWatchlistQueries();
   const runSeed = Number.parseInt(new Date().toISOString().slice(0, 10).replace(/-/g, ''), 10);
   const rotatedWatchlistQueries = rotateArray(watchlistQueries, runSeed);
   const boundedWatchlistQueries = rotatedWatchlistQueries.slice(0, MAX_WATCHLIST_GOOGLE_QUERIES_PER_RUN);
   const queries = [...boundedWatchlistQueries, ...GOOGLE_NEWS_GENERIC_QUERIES];
+  return discoverFromGoogleNewsQueries(queries, 'google-news');
+}
+
+function tokenizeForCluster(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length >= 4)
+    .filter((token) => !CLUSTER_TOKEN_STOPWORDS.has(token));
+}
+
+function extractTitlePhrases(title: string): string[] {
+  const tokens = tokenizeForCluster(title);
+  const phrases: string[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (i < tokens.length - 1) {
+      phrases.push(`${tokens[i]} ${tokens[i + 1]}`);
+    }
+    if (i < tokens.length - 2) {
+      phrases.push(`${tokens[i]} ${tokens[i + 1]} ${tokens[i + 2]}`);
+    }
+  }
+  return phrases;
+}
+
+function buildExpansionQueries(scored: DiscoveredStory[]): string[] {
+  const incidentSignalTerms = ['religious group', 'sect', 'slavery', 'raid', 'abuse', 'trafficking'];
+  const eligible = scored
+    .filter((story) => (story.discoveryScore ?? 0) >= CLUSTER_EXPANSION_MIN_SCORE)
+    .filter((story) => {
+      const title = story.title.toLowerCase();
+      return (
+        containsTerm(title, incidentSignalTerms) ||
+        containsTerm(title, CULT_TERMS) ||
+        (FOCUS_SIGNAL_TERMS.length > 0 && containsTerm(title, FOCUS_SIGNAL_TERMS))
+      );
+    })
+    .slice(0, 300);
+  if (eligible.length < CLUSTER_EXPANSION_MIN_CLUSTER_SIZE) {
+    return [];
+  }
+
+  const phraseCounts = new Map<string, number>();
+  const phraseScore = new Map<string, number>();
+  const seenPhraseByStory = new Map<number, Set<string>>();
+  for (let i = 0; i < eligible.length; i += 1) {
+    const story = eligible[i];
+    if (!story) {
+      continue;
+    }
+    const seen = new Set<string>();
+    seenPhraseByStory.set(i, seen);
+    const phrases = extractTitlePhrases(story.title);
+    for (const phrase of phrases) {
+      if (seen.has(phrase)) {
+        continue;
+      }
+      seen.add(phrase);
+      phraseCounts.set(phrase, (phraseCounts.get(phrase) ?? 0) + 1);
+      phraseScore.set(phrase, (phraseScore.get(phrase) ?? 0) + (story.discoveryScore ?? 0));
+    }
+  }
+
+  const minCoverage = Math.max(2, Math.ceil(CLUSTER_EXPANSION_MIN_CLUSTER_SIZE * 0.67));
+  const rankedSeeds = Array.from(phraseCounts.entries())
+    .filter(([, count]) => count >= minCoverage)
+    .sort((a, b) => {
+      const aScore = (phraseScore.get(a[0]) ?? 0) / a[1];
+      const bScore = (phraseScore.get(b[0]) ?? 0) / b[1];
+      if (b[1] !== a[1]) {
+        return b[1] - a[1];
+      }
+      return bScore - aScore;
+    })
+    .map(([phrase]) => phrase);
+
+  const fallbackSeeds = (() => {
+    const tokenCounts = new Map<string, number>();
+    for (const story of eligible) {
+      const seen = new Set<string>();
+      for (const token of tokenizeForCluster(story.title)) {
+        if (seen.has(token)) {
+          continue;
+        }
+        seen.add(token);
+        tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
+      }
+    }
+    return Array.from(tokenCounts.entries())
+      .filter(([, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .map(([token]) => token)
+      .slice(0, CLUSTER_EXPANSION_MAX_TOTAL_QUERIES);
+  })();
+
+  const seeds = rankedSeeds.length > 0 ? rankedSeeds : fallbackSeeds;
+  if (seeds.length === 0) {
+    return [];
+  }
+
+  const queries: string[] = [];
+  const seedLimit = Math.min(
+    CLUSTER_EXPANSION_MAX_TOTAL_QUERIES,
+    CLUSTER_EXPANSION_MAX_CLUSTERS * CLUSTER_EXPANSION_MAX_QUERIES_PER_CLUSTER,
+  );
+  for (const seed of seeds.slice(0, seedLimit)) {
+    queries.push(`"${seed}" (sect OR "religious group" OR slavery OR raid OR cult)`);
+  }
+
+  return Array.from(new Set(queries));
+}
+
+async function discoverFromGoogleNewsQueries(queries: string[], sourcePrefix: string): Promise<DiscoveredStory[]> {
+  const discovered: DiscoveredStory[] = [];
+  const seen = new Set<string>();
   // Google News RSS search returns up to 100 items; consume the full page per query.
   const perQueryLimit = 100;
   const globalCeiling = Math.max(queries.length * perQueryLimit, queries.length);
@@ -788,7 +935,7 @@ async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
           url: selectedUrl,
           title: item.title,
           publishedAt: item.publishedAt,
-          sourceFeed: `google-news:${query}`,
+          sourceFeed: `${sourcePrefix}:${query}`,
           sourceFormat: 'rss',
           sourceCategory: 'aggregator-feed',
           requiresUrlResolution: true,
@@ -1012,6 +1159,39 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
       discoveryScoreBreakdown: scoredStory.breakdown,
     };
   });
+
+  if (CLUSTER_EXPANSION_ENABLED) {
+    const expansionQueries = buildExpansionQueries(scored);
+    if (expansionQueries.length > 0) {
+      logDiscoveryProgress('cluster-expansion-start', {
+        queryCount: expansionQueries.length,
+      });
+
+      try {
+        const expanded = await discoverFromGoogleNewsQueries(expansionQueries, 'google-news-cluster');
+        if (expanded.length > 0) {
+          const alreadySeen = new Set(scored.map((item) => item.url));
+          const novelExpanded = expanded.filter((item) => !alreadySeen.has(item.url));
+          for (const item of novelExpanded) {
+            const scoredStory = scoreDiscoveredStory(item, allowedHosts);
+            scored.push({
+              ...item,
+              discoveryScore: scoredStory.score,
+              discoveryScoreBreakdown: scoredStory.breakdown,
+            });
+          }
+
+          logDiscoveryProgress('cluster-expansion-complete', {
+            discovered: expanded.length,
+            novelAdded: novelExpanded.length,
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn('[agent] cluster expansion discovery failed', { message });
+      }
+    }
+  }
 
   scored.sort((a, b) => {
     const scoreDiff = (b.discoveryScore ?? 0) - (a.discoveryScore ?? 0);

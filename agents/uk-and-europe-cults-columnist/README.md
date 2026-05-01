@@ -66,11 +66,13 @@ Each generated draft should include:
 	- `npm install`
 2. Copy environment template:
 	- copy `.env.example` to `.env`
-3. Run discovery-first dry-run (default behavior):
+3. Set required run input:
+	- `DISCOVERY_MAX_AGE_HOURS=168` for weekly runs
+4. Run discovery-first dry-run (default behavior):
 	- `npm run dev`
-4. Optionally process one explicit URL:
+5. Optionally process one explicit URL:
 	- `npm run dev -- --url=https://www.bbc.com/news/example`
-5. Optionally limit discovery candidate count:
+6. Optionally limit discovery candidate count:
 	- `npm run dev -- --max=5`
 
 The current starter prints either:
@@ -85,6 +87,7 @@ The current starter prints either:
 
 ## Runtime Focus Parameters (No Story Hardcoding)
 - Keep weekly story focus out of source code; pass it as runtime input.
+- `DISCOVERY_MAX_AGE_HOURS` is required runtime input (set `168` for weekly runs).
 - Use either `DISCOVERY_FOCUS_JSON` (inline JSON) or `DISCOVERY_FOCUS_FILE` (path to JSON file).
 - Focus input can extend discovery and ranking terms without changing code:
   - `focusSignalTerms`

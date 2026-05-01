@@ -25,6 +25,19 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
+function parseOptionalPositiveInt(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 function parseCandidateHost(url: string): string | undefined {
   try {
     return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -51,7 +64,7 @@ function logProgress(stage: string, data: Record<string, unknown>): void {
 async function main(): Promise<void> {
   const config = loadConfig();
   const url = getArg('url');
-  const maxApproved = parsePositiveInt(getArg('max'), 8);
+  const maxApproved = parseOptionalPositiveInt(getArg('max'));
   const hostBackoffEnabled = (process.env.HOST_FETCH_BACKOFF_ENABLED ?? 'true').toLowerCase() !== 'false';
   const hostFailureThreshold = parsePositiveInt(process.env.HOST_FETCH_FAILURE_THRESHOLD, 3);
   const hostBackoffStatusCodes = new Set(
@@ -70,7 +83,7 @@ async function main(): Promise<void> {
     env: config.env,
     dryRun: config.dryRun,
     url: url ?? null,
-    maxApproved,
+    maxApproved: maxApproved ?? 'unbounded',
   });
 
   const candidatesByUrl = new Map<string, DiscoveredStory>();
@@ -106,7 +119,7 @@ async function main(): Promise<void> {
 
     console.log('[agent] discovered candidate stories', {
       count: discovered.length,
-      targetApproved: maxApproved,
+      targetApproved: maxApproved ?? 'unbounded',
       feedsScanned: true,
       sourceCounts,
       watchlistHitCount: watchlistHits.length,
@@ -147,7 +160,7 @@ async function main(): Promise<void> {
 
   logProgress('processing-start', {
     candidatePool: totalCandidates,
-    targetApproved: maxApproved,
+    targetApproved: maxApproved ?? 'unbounded',
     concurrency,
   });
 
@@ -203,7 +216,7 @@ async function main(): Promise<void> {
         } else {
           accepted += 1;
 
-          if (drafted >= maxApproved) {
+          if (maxApproved !== undefined && drafted >= maxApproved) {
             acceptedNotDrafted += 1;
           } else {
             drafted += 1;
@@ -285,7 +298,7 @@ async function main(): Promise<void> {
   console.log('[agent] run summary', {
     processed,
     candidatePool: candidatesByUrl.size,
-    draftCap: maxApproved,
+    draftCap: maxApproved ?? 'unbounded',
     accepted,
     acceptedNotDrafted,
     drafted,

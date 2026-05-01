@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { pathToFileURL } from 'node:url';
 
 export type DraftStory = {
   title: string;
@@ -33,8 +34,16 @@ type Child = VNode | string | number | boolean | null | undefined | Child[];
 
 const VOID_TAGS = new Set(['meta', 'link', 'img', 'br', 'hr', 'input']);
 
-export const LOG_PATH = new URL('../last-run.log', import.meta.url);
-export const OUTPUT_PATH = new URL('../reports/cult-news-latest.html', import.meta.url);
+function resolvePathFromEnv(varName: string, fallbackRelativePath: string): URL {
+  const overridePath = process.env[varName]?.trim();
+  if (overridePath) {
+    return pathToFileURL(overridePath);
+  }
+  return new URL(fallbackRelativePath, import.meta.url);
+}
+
+export const LOG_PATH = resolvePathFromEnv('CULT_NEWS_LOG_PATH', '../last-run.log');
+export const OUTPUT_PATH = resolvePathFromEnv('CULT_NEWS_OUTPUT_PATH', '../reports/cult-news-latest.html');
 
 function decodeLogText(value: string): string {
   return value

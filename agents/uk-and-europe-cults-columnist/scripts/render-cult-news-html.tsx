@@ -229,6 +229,7 @@ function dedupeStories(stories: EnrichedStory[]): { kept: EnrichedStory[]; exclu
 }
 
 const MANUAL_RENDER_EXCLUSIONS: Array<{ url: string; reason: string }> = [
+  { url: 'https://www.heraldscotland.com/news/26025413.alan-cummings-new-mission-reinventing-scottish-theatre/?ref=rss', reason: 'Figurative usage ("cult Scottish material"/"cult BBC Scotland sitcom"), not cult-reporting journalism.' },
   { url: 'https://www.mirror.co.uk/news/uk-news/best-paperbacks-read-now-including-37030837', reason: 'Book-list lifestyle content; cult term used figuratively.' },
   { url: 'https://www.cityam.com/the-cult-of-cute-the-strange-drama-of-corporate-mascots/', reason: 'Figurative phrase: cult of cute.' },
   { url: 'https://www.vogue.com/article/casa-milana-beni-rugs-laguna-b-glassware', reason: 'Lifestyle/design piece; cult term used figuratively.' },
@@ -247,7 +248,92 @@ const MANUAL_RENDER_EXCLUSION_REASON_BY_URL = new Map(
 );
 
 function getManualRenderExclusionReason(draft: DraftStory): string | undefined {
-  return MANUAL_RENDER_EXCLUSION_REASON_BY_URL.get(normalizeUrl(draft.url));
+  const byUrl = MANUAL_RENDER_EXCLUSION_REASON_BY_URL.get(normalizeUrl(draft.url));
+  if (byUrl) {
+    return byUrl;
+  }
+
+  const normalizedTitle = draft.title.toLowerCase();
+  const normalizedHost = (draft.host ?? getHostname(draft.url) ?? '').toLowerCase();
+  if (
+    normalizedHost.includes('heraldscotland.com') &&
+    normalizedTitle.includes("alan cumming’s new mission: reinventing scottish theatre")
+  ) {
+    return 'Figurative usage ("cult Scottish material"/"cult BBC Scotland sitcom"), not cult-reporting journalism.';
+  }
+
+  return undefined;
+}
+
+const FIGURATIVE_CULT_MARKERS = [
+  'cult classic',
+  'cult favourite',
+  'cult favorite',
+  'cult following',
+  'cult status',
+  'cult hit',
+  'cult bbc scotland sitcom',
+  'cult sitcom',
+  'cult film',
+  'cult movie',
+  'cult tv',
+  'cult show',
+  'cult game',
+  'cult shooter',
+  'cult band',
+  'cult album',
+  'cult brand',
+  'cult beauty',
+  'cult fashion',
+  'cult grocery',
+  'cult restaurant',
+  'cult taco',
+];
+
+const CULT_HARM_OR_RELIGIOUS_SIGNAL_TERMS = [
+  'sect',
+  'religious group',
+  'religious sect',
+  'church',
+  'jehovah',
+  'witness',
+  'slavery',
+  'modern slavery',
+  'human trafficking',
+  'forced marriage',
+  'coercive control',
+  'abuse',
+  'sexual abuse',
+  'rape',
+  'assault',
+  'arrest',
+  'raided',
+  'raid',
+  'charged',
+  'criminal',
+  'prosecut',
+  'court',
+  'tribunal',
+  'ruling',
+  'investigation',
+  'victim',
+];
+
+function getFigurativeCultExclusionReason(story: EnrichedStory): string | undefined {
+  const haystack = `${story.title} ${story.description} ${story.articleText}`.toLowerCase();
+  if (!/\bcults?\b/u.test(haystack)) {
+    return undefined;
+  }
+
+  if (CULT_HARM_OR_RELIGIOUS_SIGNAL_TERMS.some((term) => haystack.includes(term))) {
+    return undefined;
+  }
+
+  if (!FIGURATIVE_CULT_MARKERS.some((term) => haystack.includes(term))) {
+    return undefined;
+  }
+
+  return 'Figurative usage of "cult" in benign entertainment/lifestyle context.';
 }
 
 function summarizeExclusions(excluded: Array<{ url: string; reason: string }>): void {
@@ -498,7 +584,7 @@ type StopwordsByLanguage = Record<string, string[]>;
 type StoryFeatures = {
   index: number;
   language: string;
-  titleTerms: Set<string>;
+  anchorTerms: Set<string>;
   termCounts: Map<string, number>;
 };
 
@@ -583,15 +669,28 @@ function buildStoryFeatures(stories: EnrichedStory[]): StoryFeatures[] {
     const titleTokens = tokenize(story.title, stopwords);
     const descriptionTokens = tokenize(story.description ?? '', stopwords);
     const slugTokens = tokenize(getSlug(story.url) ?? '', stopwords);
+    const articleTokens = tokenize(story.articleText ?? '', stopwords).slice(0, 500);
 
     addTokens(termCounts, titleTokens, 3);
     addTokens(termCounts, slugTokens, 2);
     addTokens(termCounts, descriptionTokens, 1);
+    addTokens(termCounts, articleTokens, 0.4);
 
     addNgrams(termCounts, titleTokens, 2, 2);
     addNgrams(termCounts, titleTokens, 3, 1);
+    addNgrams(termCounts, descriptionTokens, 2, 1.3);
+    addNgrams(termCounts, descriptionTokens, 3, 0.9);
+    addNgrams(termCounts, articleTokens, 2, 0.3);
 
-    return { index, language, titleTerms: new Set(titleTokens), termCounts };
+    const anchorTerms = new Set<string>([
+      ...titleTokens,
+      ...slugTokens,
+      ...descriptionTokens,
+      ...titleTokens.flatMap((_, i, list) => (i < list.length - 1 ? [list.slice(i, i + 2).join(' ')] : [])),
+      ...descriptionTokens.flatMap((_, i, list) => (i < list.length - 1 ? [list.slice(i, i + 2).join(' ')] : [])),
+    ]);
+
+    return { index, language, anchorTerms, termCounts };
   });
 }
 
@@ -641,13 +740,13 @@ function cosineSimilarity(a: StoryFeatures, b: StoryFeatures, idf: Map<string, n
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-function countSharedRareTitleTerms(a: StoryFeatures, b: StoryFeatures, idf: Map<string, number>): number {
+function countSharedRareAnchorTerms(a: StoryFeatures, b: StoryFeatures, idf: Map<string, number>): number {
   let shared = 0;
-  for (const term of a.titleTerms) {
-    if (!b.titleTerms.has(term)) {
+  for (const term of a.anchorTerms) {
+    if (!b.anchorTerms.has(term)) {
       continue;
     }
-    if ((idf.get(term) ?? 0) < 1.6) {
+    if ((idf.get(term) ?? 0) < 1.45) {
       continue;
     }
     if (term.length < 5) {
@@ -667,11 +766,11 @@ function buildAdjacency(features: StoryFeatures[], idf: Map<string, number>): Ma
   for (let i = 0; i < features.length; i += 1) {
     for (let j = i + 1; j < features.length; j += 1) {
       const similarity = cosineSimilarity(features[i], features[j], idf);
-      const sharedRareTitleTerms = countSharedRareTitleTerms(features[i], features[j], idf);
+      const sharedRareAnchorTerms = countSharedRareAnchorTerms(features[i], features[j], idf);
       const shouldLink =
         similarity >= strictThreshold ||
-        sharedRareTitleTerms >= 2 ||
-        (similarity >= relaxedThreshold && sharedRareTitleTerms >= 1);
+        sharedRareAnchorTerms >= 2 ||
+        (similarity >= relaxedThreshold && sharedRareAnchorTerms >= 1);
 
       if (!shouldLink) {
         continue;
@@ -870,7 +969,17 @@ async function main(): Promise<void> {
     });
   }
 
-  const dedupeResult = dedupeStories(fetchedStories);
+  const figurativeFilteredStories = fetchedStories.filter((story) => {
+    const reason = getFigurativeCultExclusionReason(story);
+    if (!reason) {
+      return true;
+    }
+
+    excluded.push({ url: story.url, reason });
+    return false;
+  });
+
+  const dedupeResult = dedupeStories(figurativeFilteredStories);
   excluded.push(...dedupeResult.excluded);
   summarizeExclusions(excluded);
 
