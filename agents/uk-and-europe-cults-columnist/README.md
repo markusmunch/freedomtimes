@@ -98,3 +98,7 @@ The current starter prints either:
   - `priorityWatchlistHosts`
   - `googleNewsWatchlistSites`
 - This keeps the agent reusable for future week-ending stories while still allowing focused runs.
+
+## Backlog Notes
+- Improve source reliability scoring to better distinguish established reporting from low-credibility and agenda-driven sources.
+- Add explicit detection and risk flags for potentially ideological/partisan blogs (including right-wing aligned sources) so they are downgraded or routed for stricter editorial review.
