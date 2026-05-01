@@ -1,0 +1,38 @@
+---
+import type { SubjectChip } from '../../lib/content/contentEntry';
+
+const {
+	title,
+	issueDate,
+	primaryByline,
+	publishedAt,
+	updatedAt,
+	isPreview = false,
+	subjectChips = [],
+} = Astro.props as {
+	title: string;
+	issueDate: string | null;
+	primaryByline: string | null;
+	publishedAt: string | null;
+	updatedAt: string | null;
+	isPreview?: boolean;
+	subjectChips: SubjectChip[];
+};
+---
+
+<header class="article-header">
+	<h1>{title}</h1>
+	{issueDate && <p class="issue-date">Issue date {new Date(issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p>}
+
+	<div class="article-meta">
+		{primaryByline && <p>By {primaryByline}</p>}
+		{publishedAt && <p>Published {new Date(publishedAt).toLocaleString()}</p>}
+		{!publishedAt && updatedAt && <p>Updated {new Date(updatedAt).toLocaleString()}</p>}
+		{isPreview && <p class="preview">Preview mode</p>}
+	</div>
+	{subjectChips.length > 0 && (
+		<ul class="subject-list" aria-label="Subjects">
+			{subjectChips.map((chip) => <li style={chip.style}>{chip.label}</li>)}
+		</ul>
+	)}
+</header>
