@@ -15,7 +15,8 @@
     "render:html": "tsx scripts/render-cult-news-html.tsx",
     "render:cult-news": "tsx scripts/render-cult-news-html.tsx",
     "recover:failed-urls": "tsx scripts/recover-failed-urls.ts",
-    "probe:publisher-langs": "tsx scripts/probe-publisher-homepage-langs.ts"
+    "probe:publisher-langs": "tsx scripts/probe-publisher-homepage-langs.ts",
+    "split:discovery-groups": "node scripts/split-discovery-query-groups.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",
