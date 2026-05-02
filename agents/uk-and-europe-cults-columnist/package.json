@@ -14,7 +14,8 @@
     "dev": "tsx src/index.ts",
     "render:html": "tsx scripts/render-cult-news-html.tsx",
     "render:cult-news": "tsx scripts/render-cult-news-html.tsx",
-    "recover:failed-urls": "tsx scripts/recover-failed-urls.ts"
+    "recover:failed-urls": "tsx scripts/recover-failed-urls.ts",
+    "probe:publisher-langs": "tsx scripts/probe-publisher-homepage-langs.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

@@ -1,0 +1,125 @@
+{
+  "_docs": "Central Google News RSS locale scoping. `useAllLocalesHosts` = full European grid. Others: `googleNewsLocaleIds` must match `id` in google-news-europe-locales.json. Run `npm run probe:publisher-langs` to fetch homepages and refresh `homepageLang` hints.",
+  "useAllLocalesHosts": [
+    "reuters.com",
+    "apnews.com",
+    "ft.com",
+    "economist.com",
+    "politico.eu",
+    "euobserver.com",
+    "euronews.com",
+    "deutsche-welle.com"
+  ],
+  "hosts": {
+    "bbc.com": {
+      "googleNewsLocaleIds": ["GB-en"],
+      "homepageLang": "en-GB",
+      "localeSource": "manual"
+    },
+    "theguardian.com": {
+      "googleNewsLocaleIds": ["GB-en"],
+      "homepageLang": "en-GB",
+      "localeSource": "manual"
+    },
+    "dw.com": {
+      "googleNewsLocaleIds": ["DE-de"],
+      "homepageLang": "de",
+      "localeSource": "manual"
+    },
+    "france24.com": {
+      "googleNewsLocaleIds": ["FR-fr"],
+      "homepageLang": "fr",
+      "localeSource": "manual"
+    },
+    "irishtimes.com": {
+      "googleNewsLocaleIds": ["IE-en"],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "rainews.it": {
+      "googleNewsLocaleIds": ["IT-it"],
+      "homepageLang": "it",
+      "localeSource": "manual"
+    },
+    "rtve.es": {
+      "googleNewsLocaleIds": ["ES-es"],
+      "homepageLang": "es",
+      "localeSource": "manual"
+    },
+    "20minutos.es": {
+      "googleNewsLocaleIds": ["ES-es"],
+      "homepageLang": "es",
+      "localeSource": "manual"
+    },
+    "ta3.com": {
+      "googleNewsLocaleIds": ["SK-sk"],
+      "homepageLang": "sk",
+      "localeSource": "manual"
+    },
+    "novinite.com": {
+      "googleNewsLocaleIds": ["BG-bg"],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "sofiaglobe.com": {
+      "googleNewsLocaleIds": ["BG-bg"],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "faz.net": {
+      "googleNewsLocaleIds": ["DE-de"],
+      "homepageLang": "de",
+      "localeSource": "manual"
+    },
+    "siol.net": {
+      "googleNewsLocaleIds": ["SI-sl"],
+      "homepageLang": "sl",
+      "localeSource": "manual"
+    },
+    "srf.ch": {
+      "googleNewsLocaleIds": ["CH-de"],
+      "homepageLang": "de",
+      "localeSource": "manual"
+    },
+    "scotsman.com": {
+      "googleNewsLocaleIds": ["GB-en"],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "heraldscotland.com": {
+      "googleNewsLocaleIds": ["GB-en"],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "irishexaminer.com": {
+      "googleNewsLocaleIds": ["IE-en"],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "elpais.com": {
+      "googleNewsLocaleIds": ["ES-es"],
+      "homepageLang": "es",
+      "localeSource": "manual"
+    },
+    "lavanguardia.com": {
+      "googleNewsLocaleIds": ["ES-es"],
+      "homepageLang": "es",
+      "localeSource": "manual"
+    },
+    "ilsole24ore.com": {
+      "googleNewsLocaleIds": ["IT-it"],
+      "homepageLang": "it",
+      "localeSource": "manual"
+    },
+    "diepresse.com": {
+      "googleNewsLocaleIds": ["AT-de"],
+      "homepageLang": "de",
+      "localeSource": "manual"
+    },
+    "ekathimerini.com": {
+      "googleNewsLocaleIds": ["GR-el"],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    }
+  }
+}
