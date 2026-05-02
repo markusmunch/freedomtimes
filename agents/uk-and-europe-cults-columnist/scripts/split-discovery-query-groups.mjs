@@ -1,9 +1,10 @@
 /**
- * One-off / maintenance: read discovery-config.json `googleNewsQueryDefinitions.groups`,
- * write `data/discovery/groups-core.json` + `data/discovery/lang/<code>.json`, then
- * rewrite discovery-config with `groupFiles` instead of inline `groups`.
+ * Migration / emergency re-split: only works when `discovery-config.json` still has an inline
+ * `googleNewsQueryDefinitions.groups` object. After the first split, edit
+ * `data/discovery/groups-core.json` and `data/discovery/lang/*.json` directly and maintain
+ * `groupFiles` in discovery-config.json by hand.
  *
- * Run from package root: node scripts/split-discovery-query-groups.mjs
+ * Run from package root: npm run split:discovery-groups
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -67,7 +68,10 @@ function main() {
   const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
   const defs = cfg.googleNewsQueryDefinitions;
   if (!defs?.groups || typeof defs.groups !== 'object') {
-    throw new Error('discovery-config.json: missing googleNewsQueryDefinitions.groups');
+    console.error(
+      'discovery-config.json has no inline `groups` (already split). Edit data/discovery/*.json and `groupFiles` instead.',
+    );
+    process.exit(1);
   }
   const groups = defs.groups;
 

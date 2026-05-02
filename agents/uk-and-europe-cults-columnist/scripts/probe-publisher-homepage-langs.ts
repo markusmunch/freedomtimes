@@ -3,7 +3,9 @@
  * and suggest googleNewsLocaleIds. Writes reports/publisher-homepage-probe-{iso}.json.
  *
  * Usage: npm run probe:publisher-langs
- * Optional: npx tsx scripts/probe-publisher-homepage-langs.ts --only=elpais.com,lavanguardia.com
+ * Merge probe into data/publisher-host-config.json: npm run probe:publisher-langs -- --apply-host-config
+ * Optional: --only=elpais.com,lavanguardia.com
+ * Parallelism: PROBE_CONCURRENCY (default 8)
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { detect } from 'tinyld';
@@ -156,12 +158,46 @@ function suggestLocaleIds(params: {
     bg: 'BG-bg',
     hr: 'HR-hr',
     si: 'SI-sl',
+    rs: 'RS-sr-Latn',
+    ba: 'BA-bs',
+    me: 'ME-sr-Latn',
+    mk: 'MK-mk',
+    al: 'AL-sq',
+    ua: 'UA-uk',
+    md: 'MD-ro',
     se: 'SE-sv',
     no: 'NO-no',
     dk: 'DK-da',
     fi: 'FI-fi',
+    is: 'IS-is',
+    ee: 'EE-et',
+    lv: 'LV-lv',
+    lt: 'LT-lt',
+    lu: 'LU-de',
+    mt: 'MT-en',
+    cy: 'CY-el',
     ch: 'CH-de',
   };
+  if (tld === 'be') {
+    if (sub === 'fr' || textLang === 'fr') {
+      return { suggestedIds: ['BE-fr'], signals };
+    }
+    if (sub === 'nl' || textLang === 'nl') {
+      return { suggestedIds: ['BE-nl'], signals };
+    }
+    return { suggestedIds: ['BE-nl'], signals };
+  }
+  if (tld === 'ch') {
+    if (sub === 'fr' || textLang === 'fr') {
+      return { suggestedIds: ['CH-fr'], signals };
+    }
+    if (sub === 'it' || textLang === 'it') {
+      return { suggestedIds: ['CH-it'], signals };
+    }
+    if (tldToId[tld]) {
+      return { suggestedIds: [tldToId[tld]!], signals };
+    }
+  }
   if (tldToId[tld]) {
     return { suggestedIds: [tldToId[tld]!], signals };
   }
@@ -183,10 +219,19 @@ function suggestLocaleIds(params: {
     bg: 'BG-bg',
     hr: 'HR-hr',
     sl: 'SI-sl',
+    sr: 'RS-sr-Latn',
+    bs: 'BA-bs',
+    mk: 'MK-mk',
+    sq: 'AL-sq',
+    uk: 'UA-uk',
     sv: 'SE-sv',
     no: 'NO-no',
     da: 'DK-da',
     fi: 'FI-fi',
+    is: 'IS-is',
+    et: 'EE-et',
+    lv: 'LV-lv',
+    lt: 'LT-lt',
   };
 
   if (sub && subToId[sub]) {
@@ -273,6 +318,17 @@ async function probeHost(host: string): Promise<{
         suggestionNote: 'fetch failed; using editorial fallback map',
       };
     }
+    const tldFallback = suggestLocaleIds({ host: hostn, textSample: '' });
+    if (tldFallback.suggestedIds.length > 0) {
+      return {
+        host: hostn,
+        ok: false,
+        error: message,
+        suggestedLocaleIds: tldFallback.suggestedIds,
+        signals: { ...tldFallback.signals, fallback: 'tld-heuristic' },
+        suggestionNote: 'fetch failed; TLD/host heuristic',
+      };
+    }
     return {
       host: hostn,
       ok: false,
@@ -322,6 +378,89 @@ function loadValidLocaleIds(): Set<string> {
   return ids;
 }
 
+const PROBE_CONCURRENCY = Math.max(2, Math.min(12, Number(process.env.PROBE_CONCURRENCY ?? '8') || 8));
+
+function mergeProbeIntoHostConfig(
+  rows: Awaited<ReturnType<typeof probeHost>>[],
+  validIds: Set<string>,
+  useAll: Set<string>,
+): void {
+  const configUrl = new URL('../data/publisher-host-config.json', import.meta.url);
+  const parsed = JSON.parse(readFileSync(configUrl, 'utf-8')) as {
+    _docs?: string;
+    useAllLocalesHosts?: string[];
+    hosts?: Record<
+      string,
+      { googleNewsLocaleIds?: string[]; homepageLang?: string; localeSource?: string }
+    >;
+  };
+
+  const hosts: Record<
+    string,
+    { googleNewsLocaleIds?: string[]; homepageLang?: string; localeSource?: string }
+  > = {};
+  for (const [k, v] of Object.entries(parsed.hosts ?? {})) {
+    if (k.startsWith('_') || !v || typeof v !== 'object') {
+      continue;
+    }
+    hosts[normalizeHost(k)] = { ...v };
+  }
+
+  for (const row of rows) {
+    if (useAll.has(row.host)) {
+      continue;
+    }
+    const ids = row.suggestedLocaleIds.filter((id) => validIds.has(id));
+    if (ids.length === 0) {
+      continue;
+    }
+
+    const primaryHomepageLang =
+      row.htmlLang?.trim() ||
+      row.contentLanguage?.trim() ||
+      row.textLangTinyld?.trim() ||
+      undefined;
+
+    const existing = hosts[row.host];
+    if (!existing) {
+      hosts[row.host] = {
+        googleNewsLocaleIds: ids,
+        homepageLang: primaryHomepageLang,
+        localeSource: 'probe',
+      };
+      continue;
+    }
+
+    if (existing.localeSource === 'manual') {
+      hosts[row.host] = {
+        ...existing,
+        ...(row.ok && primaryHomepageLang ? { homepageLang: primaryHomepageLang } : {}),
+      };
+      continue;
+    }
+
+    hosts[row.host] = {
+      googleNewsLocaleIds: ids,
+      homepageLang: primaryHomepageLang,
+      localeSource: 'probe',
+    };
+  }
+
+  const sortedHosts: Record<string, unknown> = {};
+  for (const key of Object.keys(hosts).sort()) {
+    sortedHosts[key] = hosts[key];
+  }
+
+  const next = {
+    _docs: parsed._docs,
+    useAllLocalesHosts: parsed.useAllLocalesHosts,
+    hosts: sortedHosts,
+  };
+
+  writeFileSync(configUrl, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+  console.error(`Updated publisher-host-config.json (${Object.keys(sortedHosts).length} host rows).`);
+}
+
 async function main(): Promise<void> {
   const onlyArg = process.argv.find((a) => a.startsWith('--only='));
   const onlySet = onlyArg
@@ -337,6 +476,7 @@ async function main(): Promise<void> {
   const watchlist = loadWatchlistHosts();
   const { useAll, configuredHosts } = loadConfigUseAllAndHosts();
   const validIds = loadValidLocaleIds();
+  const applyHostConfig = process.argv.includes('--apply-host-config');
 
   let targets: string[];
   if (onlySet && onlySet.size > 0) {
@@ -345,14 +485,23 @@ async function main(): Promise<void> {
     targets = watchlist.filter((h) => !useAll.has(h));
   }
 
-  console.error(`Probing ${targets.length} hosts (sequential, ~20s timeout each)…`);
+  console.error(
+    `Probing ${targets.length} hosts (concurrency ${PROBE_CONCURRENCY}, ~20s timeout per fetch)…`,
+  );
 
   const rows: Awaited<ReturnType<typeof probeHost>>[] = [];
-  for (const host of targets) {
-    process.stderr.write(`${host}… `);
-    const row = await probeHost(host);
-    rows.push(row);
-    console.error(row.ok ? `ok ${row.htmlLang ?? row.contentLanguage ?? '?'}` : `fail ${row.error ?? row.status}`);
+  for (let i = 0; i < targets.length; i += PROBE_CONCURRENCY) {
+    const slice = targets.slice(i, i + PROBE_CONCURRENCY);
+    const lo = i + 1;
+    const hi = Math.min(i + PROBE_CONCURRENCY, targets.length);
+    console.error(`Batch ${lo}-${hi} / ${targets.length}`);
+    const batch = await Promise.all(slice.map((host) => probeHost(host)));
+    for (const row of batch) {
+      rows.push(row);
+      console.error(
+        `  ${row.host}: ${row.ok ? `ok ${row.htmlLang ?? row.contentLanguage ?? row.textLangTinyld ?? '?'}` : `fail ${row.error ?? row.status}`}`,
+      );
+    }
   }
 
   const flagged = rows.filter((r) => {
@@ -388,6 +537,14 @@ async function main(): Promise<void> {
   writeFileSync(latest, `${JSON.stringify(out, null, 2)}\n`, 'utf-8');
 
   console.error(`Wrote ${file.pathname}`);
+
+  if (applyHostConfig) {
+    if (onlySet && onlySet.size > 0) {
+      console.error('--apply-host-config ignored when using --only= (run full probe to refresh all hosts).');
+    } else {
+      mergeProbeIntoHostConfig(rows, validIds, useAll);
+    }
+  }
 
   const missingRule = watchlist.filter(
     (h) => !useAll.has(h) && !configuredHosts.has(h) && !hostHasTldLocaleScope(h),

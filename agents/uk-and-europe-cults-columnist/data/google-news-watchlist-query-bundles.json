@@ -1,6 +1,6 @@
 {
   "_description": "Maps primary Google News `hl` to discovery-config `cultGroup` + `countryGroup`. Each language uses its own `*EuropeCountryOr` list. Optional `countryGroup` value `europeCountryOrMultilingual` unions every key in `europeCountryOrMergeGroupKeys` (deduped)—only if you point a bundle at it.",
-  "_coverage": "Each `*EuropeCountryOr` group in discovery-config lists country/geo names in that language. `europeCountryOrMergeGroupKeys` controls which groups are unioned (deduped) for `europeCountryOrMultilingual` bundles. Edit the array only in this file; add new groups in discovery-config first.",
+  "_coverage": "Each `*EuropeCountryOr` / cult group lives in `data/discovery/lang/<code>.json` (merged via `discovery-config.json` → `groupFiles`). `europeCountryOrMergeGroupKeys` is only for optional `europeCountryOrMultilingual` bundles.",
   "europeCountryOrMergeGroupKeys": [
     "enEuropeCountryOr",
     "deEuropeCountryOr",
