@@ -349,20 +349,15 @@ function loadWatchlistHosts(): string[] {
   return list.filter((x): x is string => typeof x === 'string').map(normalizeHost);
 }
 
-function loadConfigUseAllAndHosts(): { useAll: Set<string>; configuredHosts: Set<string> } {
+function loadConfiguredHostsFromConfig(): Set<string> {
   const url = new URL('../data/publisher-host-config.json', import.meta.url);
   const raw = readFileSync(url, 'utf-8');
-  const parsed = JSON.parse(raw) as {
-    useAllLocalesHosts?: string[];
-    hosts?: Record<string, unknown>;
-  };
-  const useAll = new Set((parsed.useAllLocalesHosts ?? []).map(normalizeHost));
-  const configuredHosts = new Set(
+  const parsed = JSON.parse(raw) as { hosts?: Record<string, unknown> };
+  return new Set(
     Object.keys(parsed.hosts ?? {})
       .filter((k) => !k.startsWith('_'))
       .map(normalizeHost),
   );
-  return { useAll, configuredHosts };
 }
 
 function loadValidLocaleIds(): Set<string> {
@@ -380,15 +375,11 @@ function loadValidLocaleIds(): Set<string> {
 
 const PROBE_CONCURRENCY = Math.max(2, Math.min(12, Number(process.env.PROBE_CONCURRENCY ?? '8') || 8));
 
-function mergeProbeIntoHostConfig(
-  rows: Awaited<ReturnType<typeof probeHost>>[],
-  validIds: Set<string>,
-  useAll: Set<string>,
-): void {
+function mergeProbeIntoHostConfig(rows: Awaited<ReturnType<typeof probeHost>>[], validIds: Set<string>): void {
   const configUrl = new URL('../data/publisher-host-config.json', import.meta.url);
   const parsed = JSON.parse(readFileSync(configUrl, 'utf-8')) as {
     _docs?: string;
-    useAllLocalesHosts?: string[];
+    watchlistQueryBundleByHost?: Record<string, string>;
     hosts?: Record<
       string,
       { googleNewsLocaleIds?: string[]; homepageLang?: string; localeSource?: string }
@@ -407,9 +398,6 @@ function mergeProbeIntoHostConfig(
   }
 
   for (const row of rows) {
-    if (useAll.has(row.host)) {
-      continue;
-    }
     const ids = row.suggestedLocaleIds.filter((id) => validIds.has(id));
     if (ids.length === 0) {
       continue;
@@ -453,7 +441,7 @@ function mergeProbeIntoHostConfig(
 
   const next = {
     _docs: parsed._docs,
-    useAllLocalesHosts: parsed.useAllLocalesHosts,
+    watchlistQueryBundleByHost: parsed.watchlistQueryBundleByHost,
     hosts: sortedHosts,
   };
 
@@ -474,7 +462,7 @@ async function main(): Promise<void> {
     : null;
 
   const watchlist = loadWatchlistHosts();
-  const { useAll, configuredHosts } = loadConfigUseAllAndHosts();
+  const configuredHosts = loadConfiguredHostsFromConfig();
   const validIds = loadValidLocaleIds();
   const applyHostConfig = process.argv.includes('--apply-host-config');
 
@@ -482,7 +470,7 @@ async function main(): Promise<void> {
   if (onlySet && onlySet.size > 0) {
     targets = [...onlySet];
   } else {
-    targets = watchlist.filter((h) => !useAll.has(h));
+    targets = [...watchlist];
   }
 
   console.error(
@@ -519,7 +507,6 @@ async function main(): Promise<void> {
   const out = {
     recordedAt: new Date().toISOString(),
     hints: {
-      useAllLocalesCount: useAll.size,
       watchlistHosts: watchlist.length,
       probedHosts: targets.length,
       rowsMissingSuggestion: flagged.filter((r) => r.ok && r.suggestedLocaleIds.length === 0).length,
@@ -542,13 +529,11 @@ async function main(): Promise<void> {
     if (onlySet && onlySet.size > 0) {
       console.error('--apply-host-config ignored when using --only= (run full probe to refresh all hosts).');
     } else {
-      mergeProbeIntoHostConfig(rows, validIds, useAll);
+      mergeProbeIntoHostConfig(rows, validIds);
     }
   }
 
-  const missingRule = watchlist.filter(
-    (h) => !useAll.has(h) && !configuredHosts.has(h) && !hostHasTldLocaleScope(h),
-  );
+  const missingRule = watchlist.filter((h) => !configuredHosts.has(h) && !hostHasTldLocaleScope(h));
   if (missingRule.length > 0) {
     console.error(
       `\nWatchlist hosts with no publisher-host-config row and no ccTLD / .uk scope (${missingRule.length}); discovery falls back to all editions until configured:`,

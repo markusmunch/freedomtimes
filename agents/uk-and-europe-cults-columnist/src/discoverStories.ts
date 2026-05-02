@@ -134,6 +134,9 @@ const GOOGLE_NEWS_RECORD_QUERY_PLAN =
 const GOOGLE_NEWS_QUERY_PLAN_INCLUDE_LOCALE_IDS =
   (process.env.GOOGLE_NEWS_QUERY_PLAN_INCLUDE_LOCALE_IDS ?? 'false').toLowerCase() === 'true';
 
+const DISCOVERY_GOOGLE_NEWS_ENABLED =
+  (process.env.DISCOVERY_GOOGLE_NEWS_ENABLED ?? 'true').toLowerCase() !== 'false';
+
 const NEWSDATA_ENABLED = (process.env.NEWSDATA_ENABLED ?? 'false').toLowerCase() === 'true';
 const NEWSIO_API_KEY = process.env.NEWSIO_API_KEY ?? process.env.NEWSDATA_API_KEY;
 const NEWSDATA_BASE_URL = 'https://newsdata.io/api/1/latest';
@@ -321,7 +324,7 @@ function primaryGoogleNewsHlSubtag(hl: string): string {
 
 /**
  * When every Google News edition for the host shares one primary `hl` and we have a bundle,
- * returns that language key; otherwise null (use English `cult "<country>"` grid).
+ * returns that language key; otherwise null (one English aggregate OR+OR query per site).
  */
 function watchlistUnifiedLanguageKeyForSite(site: string): string | null {
   const bundles = loadWatchlistQueryBundles();
@@ -343,8 +346,19 @@ function watchlistUnifiedLanguageKeyForSite(site: string): string | null {
   return bundles[lang] ? lang : null;
 }
 
+/** When `publisher-host-config.json` pins a watchlist bundle (e.g. German OR+OR for DW despite many `hl`s). */
+function watchlistExplicitBundleKeyForSite(site: string): string | null {
+  const cfg = loadPublisherSiteLocalesConfig();
+  const key = cfg.watchlistQueryBundleByHost?.[normalizePublisherSiteHost(site)];
+  if (!key) {
+    return null;
+  }
+  const bundles = loadWatchlistQueryBundles();
+  return bundles[key] ? key : null;
+}
+
 function watchlistLocaleKeyForSite(site: string): string {
-  return watchlistUnifiedLanguageKeyForSite(site) ?? 'en-cartesian';
+  return watchlistExplicitBundleKeyForSite(site) ?? watchlistUnifiedLanguageKeyForSite(site) ?? 'en-aggregate';
 }
 
 function buildWatchlistQueries(): string[] {
@@ -353,6 +367,19 @@ function buildWatchlistQueries(): string[] {
   const bundles = loadWatchlistQueryBundles();
 
   for (const site of GOOGLE_NEWS_WATCHLIST_SITES) {
+    const explicitLang = watchlistExplicitBundleKeyForSite(site);
+    if (explicitLang) {
+      const bundle = bundles[explicitLang];
+      if (bundle) {
+        const cult = groups[bundle.cultGroup];
+        const countries = resolveWatchlistCountryTerms(bundle.countryGroup, groups);
+        if (cult?.length && countries?.length) {
+          queries.push(`site:${site} ${formatWatchlistOrGroup(cult)} ${formatWatchlistOrGroup(countries)}`);
+          continue;
+        }
+      }
+    }
+
     const lang = watchlistUnifiedLanguageKeyForSite(site);
     if (lang) {
       const bundle = bundles[lang];
@@ -363,6 +390,18 @@ function buildWatchlistQueries(): string[] {
           queries.push(`site:${site} ${formatWatchlistOrGroup(cult)} ${formatWatchlistOrGroup(countries)}`);
           continue;
         }
+      }
+    }
+
+    const enBundle = bundles['en'];
+    if (enBundle) {
+      const cult = groups[enBundle.cultGroup];
+      const countries =
+        resolveWatchlistCountryTerms('europeCountryOrMultilingual', groups) ??
+        resolveWatchlistCountryTerms(enBundle.countryGroup, groups);
+      if (cult?.length && countries?.length) {
+        queries.push(`site:${site} ${formatWatchlistOrGroup(cult)} ${formatWatchlistOrGroup(countries)}`);
+        continue;
       }
     }
 
@@ -760,13 +799,14 @@ let europeGoogleNewsLocalesCache: GoogleNewsLocale[] | undefined;
 let cultKeywordsConfigCache: CultKeywordsConfigJson | undefined;
 
 type PublisherSiteLocalesJson = {
-  useAllLocalesHosts?: string[];
   localeIdsByHost?: Record<string, string[]>;
+  /** Normalized host → bundle key in google-news-watchlist-query-bundles.json (e.g. `de` for German OR+OR query text). */
+  watchlistQueryBundleByHost?: Record<string, string>;
 };
 
 /** On-disk shape for `data/publisher-host-config.json` (central host rules). */
 type PublisherHostConfigFileJson = {
-  useAllLocalesHosts?: string[];
+  watchlistQueryBundleByHost?: Record<string, string>;
   hosts?: Record<
     string,
     {
@@ -834,6 +874,18 @@ function loadPublisherSiteLocalesConfig(): PublisherSiteLocalesJson {
     const parsed = JSON.parse(raw) as PublisherHostConfigFileJson;
     const localeIdsByHost: Record<string, string[]> = {};
 
+    const watchlistQueryBundleByHost: Record<string, string> = {};
+    const rawBundleMap =
+      parsed.watchlistQueryBundleByHost && typeof parsed.watchlistQueryBundleByHost === 'object'
+        ? parsed.watchlistQueryBundleByHost
+        : {};
+    for (const [k, v] of Object.entries(rawBundleMap)) {
+      if (k.startsWith('_') || typeof v !== 'string' || !v.trim()) {
+        continue;
+      }
+      watchlistQueryBundleByHost[normalizePublisherSiteHost(k)] = v.trim().toLowerCase();
+    }
+
     const nestedHosts = parsed.hosts && typeof parsed.hosts === 'object' && !Array.isArray(parsed.hosts) ? parsed.hosts : {};
     for (const [k, entry] of Object.entries(nestedHosts)) {
       if (k.startsWith('_') || !entry || typeof entry !== 'object') {
@@ -865,16 +917,15 @@ function loadPublisherSiteLocalesConfig(): PublisherSiteLocalesJson {
     }
 
     publisherSiteLocalesCache = {
-      useAllLocalesHosts: Array.isArray(parsed.useAllLocalesHosts)
-        ? parsed.useAllLocalesHosts.map((h) => normalizePublisherSiteHost(String(h)))
-        : [],
       localeIdsByHost,
+      watchlistQueryBundleByHost:
+        Object.keys(watchlistQueryBundleByHost).length > 0 ? watchlistQueryBundleByHost : undefined,
     };
     return publisherSiteLocalesCache;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn('[agent] failed to load publisher-host-config.json', { message });
-    publisherSiteLocalesCache = { useAllLocalesHosts: [], localeIdsByHost: {} };
+    publisherSiteLocalesCache = { localeIdsByHost: {} };
     return publisherSiteLocalesCache;
   }
 }
@@ -924,11 +975,6 @@ function localesForGoogleNewsPublisherQuery(query: string, allLocales: GoogleNew
   }
 
   const cfg = loadPublisherSiteLocalesConfig();
-  const useAll = new Set((cfg.useAllLocalesHosts ?? []).map(normalizePublisherSiteHost));
-  if (useAll.has(siteHost)) {
-    return allLocales;
-  }
-
   const byHost = cfg.localeIdsByHost ?? {};
   const explicit = byHost[siteHost];
   if (explicit && explicit.length > 0) {
@@ -1576,7 +1622,7 @@ type GoogleNewsQueryPlanRow = {
   query: string;
   source: 'watchlist' | 'generic';
   siteHost?: string;
-  /** Unified `hl` bundle key (e.g. `de`, `fr`) or `en-cartesian` for English country-grid fallback. */
+  /** Unified `hl` bundle key (e.g. `de`, `fr`) or `en-aggregate` for English OR+OR fallback. */
   watchlistLocaleKey?: string;
   localeIds?: string[];
   rssCells: number;
@@ -1724,13 +1770,13 @@ export function reportGoogleNewsMainPassRssFootprint(isoDateSeed?: string): Reco
   const rssCellsThisPass = countGoogleNewsRssCells(passQueries, locales);
 
   const watchlistLocaleSiteCounts: Record<string, number> = {};
-  let watchlistEnCartesianSites = 0;
+  let watchlistEnAggregateSites = 0;
   for (const site of GOOGLE_NEWS_WATCHLIST_SITES) {
     const lang = watchlistUnifiedLanguageKeyForSite(site);
     if (lang) {
       watchlistLocaleSiteCounts[lang] = (watchlistLocaleSiteCounts[lang] ?? 0) + 1;
     } else {
-      watchlistEnCartesianSites += 1;
+      watchlistEnAggregateSites += 1;
     }
   }
 
@@ -1760,7 +1806,7 @@ export function reportGoogleNewsMainPassRssFootprint(isoDateSeed?: string): Reco
     watchlistSites: GOOGLE_NEWS_WATCHLIST_SITES.length,
     watchlistQueryStringsTotal: watchlistQueries.length,
     watchlistLocaleSiteCounts,
-    watchlistEnCartesianSites,
+    watchlistEnAggregateSites,
     queriesInMainPass: passQueries.length,
     rssGetCellsMainPass: rssCellsThisPass,
     /** Same 28-slot rotation + generics, old `cult "<country>"` grid, current per-publisher locales. */
@@ -2352,7 +2398,10 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
 
   logDiscoveryProgress('start', {
     enabledFeedCount: FEEDS.filter((feed) => feed.enabled).length,
-    phases: ['newsdata', 'google-news', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion'],
+    googleNewsEnabled: DISCOVERY_GOOGLE_NEWS_ENABLED,
+    phases: DISCOVERY_GOOGLE_NEWS_ENABLED
+      ? ['newsdata', 'google-news', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion']
+      : ['newsdata', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion'],
   });
 
   try {
@@ -2362,11 +2411,15 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
     console.warn('[agent] newsdata discovery failed', { message });
   }
 
-  try {
-    discovered.push(...(await discoverFromGoogleNews()));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn('[agent] google-news discovery failed', { message });
+  if (DISCOVERY_GOOGLE_NEWS_ENABLED) {
+    try {
+      discovered.push(...(await discoverFromGoogleNews()));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[agent] google-news discovery failed', { message });
+    }
+  } else {
+    console.log('[agent] google-news discovery skipped (DISCOVERY_GOOGLE_NEWS_ENABLED=false)');
   }
 
   const uniqueFeeds = Array.from(new Map(FEEDS.filter((feed) => feed.enabled).map((feed) => [feed.url, feed])).values());
@@ -2453,7 +2506,7 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
     };
   });
 
-  if (CLUSTER_EXPANSION_ENABLED) {
+  if (CLUSTER_EXPANSION_ENABLED && DISCOVERY_GOOGLE_NEWS_ENABLED) {
     const expansionQueries = buildExpansionQueries(scored);
     if (expansionQueries.length > 0) {
       logDiscoveryProgress('cluster-expansion-start', {

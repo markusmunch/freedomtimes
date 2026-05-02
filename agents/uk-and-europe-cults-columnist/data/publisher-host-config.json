@@ -1,15 +1,5 @@
 {
-  "_docs": "Central Google News RSS locale scoping. `useAllLocalesHosts` = full European grid. Others: `googleNewsLocaleIds` must match `id` in google-news-europe-locales.json. Run `npm run probe:publisher-langs` to fetch homepages and refresh `homepageLang` hints.",
-  "useAllLocalesHosts": [
-    "reuters.com",
-    "apnews.com",
-    "ft.com",
-    "economist.com",
-    "politico.eu",
-    "euobserver.com",
-    "euronews.com",
-    "deutsche-welle.com"
-  ],
+  "_docs": "Per-host Google News RSS scope: each `hosts` row uses `googleNewsLocaleIds` (ids from google-news-europe-locales.json)—typically one edition per publisher. Optional `watchlistQueryBundleByHost` pins cult+country OR-groups when a single locale’s `hl` would not match the editorial language. Run `npm run probe:publisher-langs` to fetch homepages and refresh `homepageLang` hints.",
   "hosts": {
     "15min.lt": {
       "googleNewsLocaleIds": [
@@ -87,6 +77,13 @@
       ],
       "homepageLang": "it",
       "localeSource": "probe"
+    },
+    "apnews.com": {
+      "googleNewsLocaleIds": [
+        "GB-en"
+      ],
+      "homepageLang": "en",
+      "localeSource": "manual"
     },
     "bbc.co.uk": {
       "googleNewsLocaleIds": [
@@ -214,6 +211,13 @@
       "homepageLang": "de-AT",
       "localeSource": "probe"
     },
+    "deutsche-welle.com": {
+      "googleNewsLocaleIds": [
+        "DE-de"
+      ],
+      "homepageLang": "de",
+      "localeSource": "manual"
+    },
     "diepresse.com": {
       "googleNewsLocaleIds": [
         "AT-de"
@@ -270,6 +274,13 @@
       "homepageLang": "de",
       "localeSource": "manual"
     },
+    "economist.com": {
+      "googleNewsLocaleIds": [
+        "GB-en"
+      ],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
     "ekathimerini.com": {
       "googleNewsLocaleIds": [
         "GR-el"
@@ -305,6 +316,20 @@
       "homepageLang": "el",
       "localeSource": "probe"
     },
+    "euobserver.com": {
+      "googleNewsLocaleIds": [
+        "GB-en"
+      ],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "euronews.com": {
+      "googleNewsLocaleIds": [
+        "FR-fr"
+      ],
+      "homepageLang": "fr",
+      "localeSource": "manual"
+    },
     "expressen.se": {
       "googleNewsLocaleIds": [
         "SE-sv"
@@ -322,6 +347,13 @@
     "france24.com": {
       "googleNewsLocaleIds": [
         "FR-fr"
+      ],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
+    "ft.com": {
+      "googleNewsLocaleIds": [
+        "GB-en"
       ],
       "homepageLang": "en",
       "localeSource": "manual"
@@ -361,6 +393,12 @@
       "homepageLang": "hu",
       "localeSource": "probe"
     },
+    "i.ro": {
+      "googleNewsLocaleIds": [
+        "RO-ro"
+      ],
+      "localeSource": "probe"
+    },
     "idnes.cz": {
       "googleNewsLocaleIds": [
         "CZ-cs"
@@ -380,12 +418,6 @@
         "FI-fi"
       ],
       "homepageLang": "fi",
-      "localeSource": "probe"
-    },
-    "i.ro": {
-      "googleNewsLocaleIds": [
-        "RO-ro"
-      ],
       "localeSource": "probe"
     },
     "in.gr": {
@@ -630,6 +662,13 @@
       ],
       "localeSource": "probe"
     },
+    "politico.eu": {
+      "googleNewsLocaleIds": [
+        "GB-en"
+      ],
+      "homepageLang": "en",
+      "localeSource": "manual"
+    },
     "politiken.dk": {
       "googleNewsLocaleIds": [
         "DK-da"
@@ -678,6 +717,13 @@
       ],
       "homepageLang": "it",
       "localeSource": "probe"
+    },
+    "reuters.com": {
+      "googleNewsLocaleIds": [
+        "GB-en"
+      ],
+      "homepageLang": "en",
+      "localeSource": "manual"
     },
     "rp.pl": {
       "googleNewsLocaleIds": [
@@ -817,17 +863,17 @@
       "homepageLang": "sk",
       "localeSource": "manual"
     },
+    "tagesanzeiger.ch": {
+      "googleNewsLocaleIds": [
+        "CH-de"
+      ],
+      "localeSource": "probe"
+    },
     "tagesschau.de": {
       "googleNewsLocaleIds": [
         "DE-de"
       ],
       "homepageLang": "de",
-      "localeSource": "probe"
-    },
-    "tagesanzeiger.ch": {
-      "googleNewsLocaleIds": [
-        "CH-de"
-      ],
       "localeSource": "probe"
     },
     "telegraaf.nl": {
