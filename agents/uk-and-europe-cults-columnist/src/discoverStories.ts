@@ -1,10 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { detect as detectClusterTitleLanguage } from 'tinyld';
 import { ALL_CULT_TERMS, getCultTermsForLanguage } from './cultTerms.js';
 import { fetchJsonWithCache, fetchTextWithCache } from './httpCache.js';
 import {
   FOCUS_SIGNAL_TERMS,
   GOOGLE_NEWS_COUNTRY_TERMS,
   GOOGLE_NEWS_GENERIC_QUERIES,
+  GOOGLE_NEWS_QUERY_GROUPS,
   GOOGLE_NEWS_WATCHLIST_SITES,
   NEWSDATA_COUNTRY_CODES,
   NEWSDATA_LANGUAGES,
@@ -100,6 +102,30 @@ const GOOGLE_NEWS_TOTAL_CAP = Math.max(
   Number.parseInt(process.env.GOOGLE_NEWS_TOTAL_CAP ?? '25000', 10) || 25000,
 );
 
+/** Pacing between Google News RSS cells to reduce 429/503 bursts (0 = off). */
+const GOOGLE_NEWS_RSS_REQUEST_GAP_MS = Math.max(
+  0,
+  Number.parseInt(process.env.GOOGLE_NEWS_RSS_REQUEST_GAP_MS ?? '200', 10) || 0,
+);
+
+/** Extra pause after a 503 on Google News RSS so rate limits can recover (0 = off). */
+const GOOGLE_NEWS_RSS_AFTER_503_MS = Math.max(
+  0,
+  Number.parseInt(process.env.GOOGLE_NEWS_RSS_AFTER_503_MS ?? '5000', 10) || 0,
+);
+
+/** Concurrent article link resolutions after each RSS parse (same URL shares one in-flight job). */
+const GOOGLE_NEWS_LINK_RESOLVE_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.GOOGLE_NEWS_LINK_RESOLVE_CONCURRENCY ?? '8', 10) || 8,
+);
+
+/** How far ahead to schedule link resolves (items in the feed), as a multiple of concurrency. */
+const GOOGLE_NEWS_LINK_PREFETCH_MULT = Math.max(
+  2,
+  Number.parseInt(process.env.GOOGLE_NEWS_LINK_PREFETCH_MULT ?? '4', 10) || 4,
+);
+
 const NEWSDATA_ENABLED = (process.env.NEWSDATA_ENABLED ?? 'false').toLowerCase() === 'true';
 const NEWSIO_API_KEY = process.env.NEWSIO_API_KEY ?? process.env.NEWSDATA_API_KEY;
 const NEWSDATA_BASE_URL = 'https://newsdata.io/api/1/latest';
@@ -141,12 +167,104 @@ const NEWSIO_MAX_CREDITS_PER_RUN = Math.max(
 );
 
 function logDiscoveryProgress(stage: string, data: Record<string, unknown>): void {
-  console.log(`[agent][progress] ${JSON.stringify({ scope: 'discovery', stage, ...data })}`);
+  console.log(
+    `[agent][progress] ${JSON.stringify({ scope: 'discovery', at: new Date().toISOString(), stage, ...data })}`,
+  );
+}
+
+const DISCOVERY_PROGRESS_GOOGLE_NEWS_EVERY = Math.max(
+  1,
+  Number.parseInt(process.env.DISCOVERY_PROGRESS_GOOGLE_NEWS_EVERY ?? '10', 10) || 10,
+);
+const DISCOVERY_PROGRESS_FEEDS_EVERY = Math.max(
+  1,
+  Number.parseInt(process.env.DISCOVERY_PROGRESS_FEEDS_EVERY ?? '5', 10) || 5,
+);
+
+const DISCOVERY_LOG_EVERY_GOOGLE_NEWS_HTTP =
+  (process.env.DISCOVERY_LOG_EVERY_GOOGLE_NEWS_HTTP ?? 'false').toLowerCase() === 'true';
+
+/** Log fetch-start / fetch-done per RSS cell so long network waits are visible (set false to reduce noise). */
+const DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE =
+  (process.env.DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE ?? 'true').toLowerCase() !== 'false';
+
+/** While resolving Google News article links after RSS parse, log every N resolutions (1 = every link). */
+const DISCOVERY_PROGRESS_GOOGLE_NEWS_LINK_RESOLVE_EVERY = Math.max(
+  1,
+  Number.parseInt(process.env.DISCOVERY_PROGRESS_GOOGLE_NEWS_LINK_RESOLVE_EVERY ?? '5', 10) || 5,
+);
+
+function truncateForProgress(value: string, maxLen: number): string {
+  const t = value.replace(/\s+/g, ' ').trim();
+  if (t.length <= maxLen) {
+    return t;
+  }
+  return `${t.slice(0, maxLen - 1)}…`;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatWatchlistOrGroup(terms: string[]): string {
+  return `(${terms.join(' OR ')})`;
+}
+
+function googleNewsHlIsDe(hl: string): boolean {
+  const h = hl.toLowerCase();
+  return h === 'de' || h.startsWith('de-');
+}
+
+function googleNewsHlIsFr(hl: string): boolean {
+  const h = hl.toLowerCase();
+  return h === 'fr' || h.startsWith('fr-');
+}
+
+/**
+ * When every Google News edition we use for a host shares one `hl`, emit one OR-rich query
+ * (localized cult terms × European country names) instead of English `cult "UK"` … grids.
+ */
+function watchlistLanguageProfileForSite(site: string): 'de-one' | 'fr-one' | 'en-cartesian' {
+  const host = normalizePublisherSiteHost(site);
+  const probe = `site:${host} cult`;
+  const allLocales = loadEuropeGoogleNewsLocales();
+  const queryLocales = localesForGoogleNewsPublisherQuery(probe, allLocales);
+  if (queryLocales.length === 0) {
+    return 'en-cartesian';
+  }
+
+  const hls = queryLocales.map((l) => l.hl);
+  if (hls.every(googleNewsHlIsDe)) {
+    return 'de-one';
+  }
+  if (hls.every(googleNewsHlIsFr)) {
+    return 'fr-one';
+  }
+  return 'en-cartesian';
 }
 
 function buildWatchlistQueries(): string[] {
   const queries: string[] = [];
+  const g = GOOGLE_NEWS_QUERY_GROUPS;
+  const deCult = g.deAtChTerms;
+  const deCountries = g.deEuropeCountryOr;
+  const frCult = g.frBeTerms;
+  const frCountries = g.frEuropeCountryOr;
+
   for (const site of GOOGLE_NEWS_WATCHLIST_SITES) {
+    const profile = watchlistLanguageProfileForSite(site);
+    if (profile === 'de-one' && deCult?.length && deCountries?.length) {
+      queries.push(`site:${site} ${formatWatchlistOrGroup(deCult)} ${formatWatchlistOrGroup(deCountries)}`);
+      continue;
+    }
+    if (profile === 'fr-one' && frCult?.length && frCountries?.length) {
+      queries.push(`site:${site} ${formatWatchlistOrGroup(frCult)} ${formatWatchlistOrGroup(frCountries)}`);
+      continue;
+    }
+
     for (const country of GOOGLE_NEWS_COUNTRY_TERMS) {
       queries.push(`site:${site} cult "${country}"`);
     }
@@ -165,12 +283,96 @@ function rotateArray<T>(items: T[], offset: number): T[] {
 }
 
 const CULT_TERMS = ALL_CULT_TERMS;
-const CLUSTER_TOKEN_STOPWORDS = new Set([
-  'with', 'from', 'that', 'this', 'after', 'under', 'about', 'into', 'over', 'more', 'than', 'have',
-  'been', 'were', 'their', 'they', 'them', 'will', 'what', 'where', 'which', 'while', 'during',
-  'religious', 'group', 'groups', 'sect', 'sects', 'cult', 'cults', 'slavery', 'raid', 'raids', 'police',
-  'investigation', 'members', 'people', 'arrested', 'bail', 'charged', 'allegations',
-]);
+
+const CLUSTER_STOPWORD_LANG_ALIASES: Record<string, string> = {
+  nb: 'no',
+  nn: 'no',
+};
+
+let clusterStopwordsByLangCache: Map<string, Set<string>> | undefined;
+
+function normalizeClusterStopwordLang(code: string | undefined): string {
+  if (!code || code.length < 2) {
+    return 'en';
+  }
+  const base = code.toLowerCase().trim().split('-')[0] ?? 'en';
+  return CLUSTER_STOPWORD_LANG_ALIASES[base] ?? base;
+}
+
+function loadClusterStopwordsByLang(): Map<string, Set<string>> {
+  if (clusterStopwordsByLangCache) {
+    return clusterStopwordsByLangCache;
+  }
+
+  const map = new Map<string, Set<string>>();
+  try {
+    const configUrl = new URL('../data/cluster-token-stopwords.json', import.meta.url);
+    const raw = readFileSync(configUrl, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const baseRaw = parsed.base;
+    const baseArr = Array.isArray(baseRaw) ? baseRaw : [];
+    const baseSet = new Set(baseArr.map((t) => String(t).toLowerCase()));
+
+    for (const [key, val] of Object.entries(parsed)) {
+      if (key === 'base' || key.startsWith('_')) {
+        continue;
+      }
+      if (!Array.isArray(val)) {
+        continue;
+      }
+      const set = new Set(baseSet);
+      for (const t of val) {
+        set.add(String(t).toLowerCase());
+      }
+      map.set(key.toLowerCase(), set);
+    }
+
+    if (!map.has('en')) {
+      map.set('en', new Set(baseSet));
+    }
+
+    clusterStopwordsByLangCache = map;
+    return map;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[agent] failed to load cluster-token-stopwords.json', { message });
+    const fallback = new Set(
+      [
+        'with', 'from', 'that', 'this', 'after', 'under', 'about', 'into', 'over', 'more', 'than', 'have',
+        'been', 'were', 'their', 'they', 'them', 'will', 'what', 'where', 'which', 'while', 'during',
+        'religious', 'group', 'groups', 'sect', 'sects', 'cult', 'cults', 'slavery', 'raid', 'raids',
+        'police', 'investigation', 'members', 'people', 'arrested', 'bail', 'charged', 'allegations',
+      ].map((t) => t.toLowerCase()),
+    );
+    clusterStopwordsByLangCache = new Map([['en', fallback]]);
+    return clusterStopwordsByLangCache;
+  }
+}
+
+function clusterStopwordsForLanguage(lang: string | undefined): Set<string> {
+  const map = loadClusterStopwordsByLang();
+  const code = normalizeClusterStopwordLang(lang);
+  return map.get(code) ?? map.get('en')!;
+}
+
+function detectTitleLanguageForCluster(title: string, hint?: string | undefined): string {
+  const trimmed = hint?.trim();
+  if (trimmed && trimmed.length >= 2) {
+    return normalizeClusterStopwordLang(trimmed);
+  }
+  if (title.trim().length < 8) {
+    return 'en';
+  }
+  try {
+    const d = detectClusterTitleLanguage(title);
+    if (d && typeof d === 'string' && d.length >= 2) {
+      return normalizeClusterStopwordLang(d);
+    }
+  } catch {
+    // ignore tinyld failures
+  }
+  return 'en';
+}
 
 function decodeXml(text: string): string {
   return text
@@ -456,6 +658,175 @@ type CultKeywordsConfigJson = {
 let europeGoogleNewsLocalesCache: GoogleNewsLocale[] | undefined;
 let cultKeywordsConfigCache: CultKeywordsConfigJson | undefined;
 
+type PublisherSiteLocalesJson = {
+  useAllLocalesHosts?: string[];
+  localeIdsByHost?: Record<string, string[]>;
+};
+
+let publisherSiteLocalesCache: PublisherSiteLocalesJson | undefined;
+const warnedPublisherHostsWithoutRule = new Set<string>();
+
+/** ISO 3166-1 alpha-2 TLD (last label) → Google News `gl` for our European editions. */
+const CC_TLD_TO_GL: Record<string, string> = {
+  ie: 'IE',
+  fr: 'FR',
+  es: 'ES',
+  it: 'IT',
+  nl: 'NL',
+  be: 'BE',
+  at: 'AT',
+  ch: 'CH',
+  pl: 'PL',
+  pt: 'PT',
+  gr: 'GR',
+  cy: 'CY',
+  cz: 'CZ',
+  sk: 'SK',
+  hu: 'HU',
+  ro: 'RO',
+  bg: 'BG',
+  hr: 'HR',
+  si: 'SI',
+  rs: 'RS',
+  ba: 'BA',
+  me: 'ME',
+  mk: 'MK',
+  al: 'AL',
+  ua: 'UA',
+  md: 'MD',
+  se: 'SE',
+  no: 'NO',
+  dk: 'DK',
+  fi: 'FI',
+  is: 'IS',
+  ee: 'EE',
+  lv: 'LV',
+  lt: 'LT',
+  lu: 'LU',
+  mt: 'MT',
+  de: 'DE',
+};
+
+function loadPublisherSiteLocalesConfig(): PublisherSiteLocalesJson {
+  if (publisherSiteLocalesCache) {
+    return publisherSiteLocalesCache;
+  }
+
+  try {
+    const configUrl = new URL('../data/google-news-publisher-site-locales.json', import.meta.url);
+    const raw = readFileSync(configUrl, 'utf-8');
+    const parsed = JSON.parse(raw) as PublisherSiteLocalesJson;
+    const rawHostMap =
+      parsed.localeIdsByHost && typeof parsed.localeIdsByHost === 'object' && !Array.isArray(parsed.localeIdsByHost)
+        ? parsed.localeIdsByHost
+        : {};
+    const localeIdsByHost: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(rawHostMap)) {
+      if (!Array.isArray(v)) {
+        continue;
+      }
+      localeIdsByHost[normalizePublisherSiteHost(k)] = v.filter((id): id is string => typeof id === 'string');
+    }
+    publisherSiteLocalesCache = {
+      useAllLocalesHosts: Array.isArray(parsed.useAllLocalesHosts)
+        ? parsed.useAllLocalesHosts.map((h) => normalizePublisherSiteHost(String(h)))
+        : [],
+      localeIdsByHost,
+    };
+    return publisherSiteLocalesCache;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[agent] failed to load google-news-publisher-site-locales.json', { message });
+    publisherSiteLocalesCache = { useAllLocalesHosts: [], localeIdsByHost: {} };
+    return publisherSiteLocalesCache;
+  }
+}
+
+function normalizePublisherSiteHost(host: string): string {
+  return host
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, '')
+    .replace(/^["']+|["']+$/g, '');
+}
+
+/** First `site:` host in the query, if any (Google News `site:` operator). */
+function extractSiteHostFromGoogleNewsQuery(query: string): string | undefined {
+  const match = query.match(/\bsite:([^\s)]+)/i);
+  return match?.[1] ? normalizePublisherSiteHost(match[1]) : undefined;
+}
+
+function resolveGlsFromPublisherHostname(host: string): string[] | undefined {
+  const h = host.toLowerCase();
+  if (h.endsWith('.co.uk') || h === 'uk' || h.endsWith('.uk')) {
+    return ['GB'];
+  }
+
+  const parts = h.split('.').filter(Boolean);
+  if (parts.length < 2) {
+    return undefined;
+  }
+
+  const tld = parts[parts.length - 1]!;
+  const gl = CC_TLD_TO_GL[tld];
+  if (gl) {
+    return [gl];
+  }
+
+  return undefined;
+}
+
+/**
+ * For `site:publisher` watchlist queries, only Google News editions that match the publisher's market.
+ * Generic queries (no `site:`) use the full European locale set.
+ */
+function localesForGoogleNewsPublisherQuery(query: string, allLocales: GoogleNewsLocale[]): GoogleNewsLocale[] {
+  const siteHost = extractSiteHostFromGoogleNewsQuery(query);
+  if (!siteHost) {
+    return allLocales;
+  }
+
+  const cfg = loadPublisherSiteLocalesConfig();
+  const useAll = new Set((cfg.useAllLocalesHosts ?? []).map(normalizePublisherSiteHost));
+  if (useAll.has(siteHost)) {
+    return allLocales;
+  }
+
+  const byHost = cfg.localeIdsByHost ?? {};
+  const explicit = byHost[siteHost];
+  if (explicit && explicit.length > 0) {
+    const idSet = new Set(explicit);
+    const picked = allLocales.filter((l) => idSet.has(l.id));
+    if (picked.length > 0) {
+      return picked;
+    }
+  }
+
+  const gls = resolveGlsFromPublisherHostname(siteHost);
+  if (gls && gls.length > 0) {
+    const glSet = new Set(gls);
+    return allLocales.filter((l) => glSet.has(l.gl));
+  }
+
+  if (!warnedPublisherHostsWithoutRule.has(siteHost)) {
+    warnedPublisherHostsWithoutRule.add(siteHost);
+    console.warn('[agent] google-news site: host has no locale rule; using all editions', {
+      host: siteHost,
+      hint: 'data/google-news-publisher-site-locales.json',
+    });
+  }
+
+  return allLocales;
+}
+
+function countGoogleNewsRssCells(queries: string[], allLocales: GoogleNewsLocale[]): number {
+  let n = 0;
+  for (const q of queries) {
+    n += localesForGoogleNewsPublisherQuery(q, allLocales).length;
+  }
+  return n;
+}
+
 function loadEuropeGoogleNewsLocalesFromFile(): GoogleNewsLocale[] {
   if (europeGoogleNewsLocalesCache) {
     return europeGoogleNewsLocalesCache;
@@ -613,8 +984,35 @@ function applyLocalizedCultTermsToGoogleNewsQuery(baseQuery: string, locale: Goo
   return `${baseQuery} ${clause}`.trim();
 }
 
+/**
+ * Google News RSS honors unofficial `when:` tokens inside the q= string. The `h` suffix (e.g. when:168h)
+ * aligns the RSS window with DISCOVERY_MAX_AGE_HOURS; without this, rankings skew and stories fall past the
+ * ~100-item cap. Very large N may be ignored by Google — override with GOOGLE_NEWS_WHEN if needed.
+ */
+function buildGoogleNewsTimeQualifier(): string {
+  const raw = process.env.GOOGLE_NEWS_WHEN?.trim();
+  if (raw) {
+    const lower = raw.toLowerCase();
+    if (lower === 'off' || lower === 'none' || lower === 'false') {
+      return '';
+    }
+    return raw;
+  }
+
+  const h = Math.max(1, Math.round(DISCOVERY_MAX_AGE_HOURS));
+  const maxHoursForWhenH = 24 * 365;
+
+  if (h <= maxHoursForWhenH) {
+    return `when:${h}h`;
+  }
+
+  return 'when:1y';
+}
+
 function buildGoogleNewsRssUrl(query: string, locale: GoogleNewsLocale): string {
-  const fullQuery = applyLocalizedCultTermsToGoogleNewsQuery(query, locale);
+  const withCult = applyLocalizedCultTermsToGoogleNewsQuery(query, locale);
+  const timeQualifier = buildGoogleNewsTimeQualifier();
+  const fullQuery = timeQualifier ? `${withCult} ${timeQualifier}`.trim() : withCult;
   const encodedQuery = encodeURIComponent(fullQuery);
   const encodedHl = encodeURIComponent(locale.hl);
   const encodedCeid = encodeURIComponent(locale.ceid);
@@ -751,15 +1149,7 @@ async function discoverFromNewsData(): Promise<DiscoveredStory[]> {
 
   for (const query of queries) {
     queryIndex += 1;
-
-    if (queryIndex === 1 || queryIndex % 3 === 0) {
-      logDiscoveryProgress('newsdata-running', {
-        queryIndex,
-        queryCount: queries.length,
-        discovered: discovered.length,
-      });
-    }
-
+    const discoveredBefore = discovered.length;
     const cachedResults = getCachedNewsDataResults(cache, query);
     let results: NewsDataResult[];
 
@@ -779,12 +1169,35 @@ async function discoverFromNewsData(): Promise<DiscoveredStory[]> {
 
         if (!response.ok) {
           console.warn('[agent] newsdata fetch failed', { status: response.status, query });
+          logDiscoveryProgress('newsdata-running', {
+            queryIndex,
+            queryCount: queries.length,
+            newsdataPct:
+              queries.length > 0 ? Number(((queryIndex / queries.length) * 100).toFixed(1)) : 100,
+            queryPreview: truncateForProgress(query, 100),
+            discovered: discovered.length,
+            addedThisQuery: 0,
+            resultRows: 0,
+            fetchOk: false,
+          });
           continue;
         }
 
         const payload = response.json;
         if (!payload) {
           console.warn('[agent] newsdata parse error', { query });
+          logDiscoveryProgress('newsdata-running', {
+            queryIndex,
+            queryCount: queries.length,
+            newsdataPct:
+              queries.length > 0 ? Number(((queryIndex / queries.length) * 100).toFixed(1)) : 100,
+            queryPreview: truncateForProgress(query, 100),
+            discovered: discovered.length,
+            addedThisQuery: 0,
+            resultRows: 0,
+            fetchOk: false,
+            parseError: true,
+          });
           continue;
         }
 
@@ -794,6 +1207,17 @@ async function discoverFromNewsData(): Promise<DiscoveredStory[]> {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn('[agent] newsdata fetch error', { query, message });
+        logDiscoveryProgress('newsdata-running', {
+          queryIndex,
+          queryCount: queries.length,
+          newsdataPct:
+            queries.length > 0 ? Number(((queryIndex / queries.length) * 100).toFixed(1)) : 100,
+          queryPreview: truncateForProgress(query, 100),
+          discovered: discovered.length,
+          addedThisQuery: 0,
+          resultRows: 0,
+          fetchError: true,
+        });
         continue;
       }
     }
@@ -827,6 +1251,18 @@ async function discoverFromNewsData(): Promise<DiscoveredStory[]> {
         publisherUrl: normalizePossibleUrl(item.source_url),
       });
     }
+
+    logDiscoveryProgress('newsdata-running', {
+      queryIndex,
+      queryCount: queries.length,
+      newsdataPct:
+        queries.length > 0 ? Number(((queryIndex / queries.length) * 100).toFixed(1)) : 100,
+      queryPreview: truncateForProgress(query, 100),
+      discovered: discovered.length,
+      addedThisQuery: discovered.length - discoveredBefore,
+      resultRows: results.length,
+      fetchOk: true,
+    });
   }
 
   if (cacheUpdated) {
@@ -864,6 +1300,68 @@ async function resolveGoogleNewsLink(url: string): Promise<string> {
   }
 
   return url;
+}
+
+/**
+ * Bounded parallelism for per-feed URL resolution: dedupe by URL, at most `maxConcurrent` calls to `resolveOne` at once.
+ */
+function createPooledUrlResolver(
+  maxConcurrent: number,
+  resolveOne: (url: string) => Promise<string>,
+): { schedule: (url: string) => void; get: (url: string) => Promise<string> } {
+  let active = 0;
+  const waitQueue: Array<() => void> = [];
+  const urlToPromise = new Map<string, Promise<string>>();
+
+  function acquireSlot(): Promise<void> {
+    if (active < maxConcurrent) {
+      active += 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      waitQueue.push(() => {
+        active += 1;
+        resolve();
+      });
+    });
+  }
+
+  function releaseSlot(): void {
+    active -= 1;
+    const next = waitQueue.shift();
+    if (next) {
+      next();
+    }
+  }
+
+  function get(url: string): Promise<string> {
+    const hit = urlToPromise.get(url);
+    if (hit) {
+      return hit;
+    }
+
+    const created = (async () => {
+      await acquireSlot();
+      try {
+        return await resolveOne(url);
+      } finally {
+        releaseSlot();
+      }
+    })();
+
+    urlToPromise.set(url, created);
+    void created.finally(() => {
+      urlToPromise.delete(url);
+    });
+    return created;
+  }
+
+  return {
+    get,
+    schedule(url: string): void {
+      void get(url);
+    },
+  };
 }
 
 const googleNewsDecodedUrlCache = new Map<string, string>();
@@ -937,7 +1435,8 @@ async function decodeGoogleNewsWrapperUrl(url: string): Promise<string | undefin
   }
 }
 
-async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
+/** Google News RSS discovery only (watchlist + generic queries), for tooling / smoke tests. */
+export async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
   const watchlistQueries = buildWatchlistQueries();
   const runSeed = Number.parseInt(new Date().toISOString().slice(0, 10).replace(/-/g, ''), 10);
   const rotatedWatchlistQueries = rotateArray(watchlistQueries, runSeed);
@@ -946,16 +1445,85 @@ async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
   return discoverFromGoogleNewsQueries(queries, 'google-news');
 }
 
-function tokenizeForCluster(value: string): string[] {
+/** Diagnostics: planned RSS GET counts for the main Google News pass (no network). */
+export function reportGoogleNewsMainPassRssFootprint(isoDateSeed?: string): Record<string, unknown> {
+  const locales = loadEuropeGoogleNewsLocales();
+  const localeCount = locales.length;
+  const runSeed = Number.parseInt((isoDateSeed ?? new Date().toISOString().slice(0, 10)).replace(/-/g, ''), 10);
+
+  const watchlistQueries = buildWatchlistQueries();
+  const rotated = rotateArray(watchlistQueries, runSeed);
+  const boundedWatchlist = rotated.slice(0, MAX_WATCHLIST_GOOGLE_QUERIES_PER_RUN);
+  const passQueries = [...boundedWatchlist, ...GOOGLE_NEWS_GENERIC_QUERIES];
+  const rssCellsThisPass = countGoogleNewsRssCells(passQueries, locales);
+
+  let profileDe = 0;
+  let profileFr = 0;
+  let profileEn = 0;
+  for (const site of GOOGLE_NEWS_WATCHLIST_SITES) {
+    const p = watchlistLanguageProfileForSite(site);
+    if (p === 'de-one') {
+      profileDe += 1;
+    } else if (p === 'fr-one') {
+      profileFr += 1;
+    } else {
+      profileEn += 1;
+    }
+  }
+
+  const legacyEnglishWatchlist: string[] = [];
+  for (const site of GOOGLE_NEWS_WATCHLIST_SITES) {
+    for (const country of GOOGLE_NEWS_COUNTRY_TERMS) {
+      legacyEnglishWatchlist.push(`site:${site} cult "${country}"`);
+    }
+  }
+  const legacyRotated = rotateArray(legacyEnglishWatchlist, runSeed);
+  const legacyBounded = legacyRotated.slice(0, MAX_WATCHLIST_GOOGLE_QUERIES_PER_RUN);
+  const legacyPassQueries = [...legacyBounded, ...GOOGLE_NEWS_GENERIC_QUERIES];
+  const rssCellsLegacyWatchlistPublisherLocales = countGoogleNewsRssCells(legacyPassQueries, locales);
+  const rssCellsLegacyWatchlistAllLocalesEveryQuery = legacyPassQueries.length * localeCount;
+
+  const allNewPlusGeneric = [...watchlistQueries, ...GOOGLE_NEWS_GENERIC_QUERIES];
+  const allLegacyPlusGeneric = [...legacyEnglishWatchlist, ...GOOGLE_NEWS_GENERIC_QUERIES];
+  const rssCellsFullPoolNew = countGoogleNewsRssCells(allNewPlusGeneric, locales);
+  const rssCellsFullPoolLegacyPublisherLocales = countGoogleNewsRssCells(allLegacyPlusGeneric, locales);
+  const rssCellsFullPoolLegacyFullGrid = allLegacyPlusGeneric.length * localeCount;
+
+  return {
+    localeCount,
+    runSeed,
+    maxWatchlistQueriesPerRun: MAX_WATCHLIST_GOOGLE_QUERIES_PER_RUN,
+    genericTemplateQueries: GOOGLE_NEWS_GENERIC_QUERIES.length,
+    watchlistSites: GOOGLE_NEWS_WATCHLIST_SITES.length,
+    watchlistQueryStringsTotal: watchlistQueries.length,
+    watchlistProfileSites: { deOne: profileDe, frOne: profileFr, enCartesian: profileEn },
+    queriesInMainPass: passQueries.length,
+    rssGetCellsMainPass: rssCellsThisPass,
+    /** Same 28-slot rotation + generics, old `cult "<country>"` grid, current per-publisher locales. */
+    rssGetCellsLegacyEnglishWatchlistPublisherLocales: rssCellsLegacyWatchlistPublisherLocales,
+    /** Same pass query count, every query × every locale (no publisher-scoped locales). */
+    rssGetCellsLegacyFullEuropeGrid: rssCellsLegacyWatchlistAllLocalesEveryQuery,
+    legacyEnglishWatchlistStringsTotal: legacyEnglishWatchlist.length,
+    /** Entire watchlist pool + generics, current localized watchlist + publisher locales. */
+    rssGetCellsFullPoolNewWatchlist: rssCellsFullPoolNew,
+    /** Entire legacy English grid + generics, publisher locales. */
+    rssGetCellsFullPoolLegacyWatchlistPublisherLocales: rssCellsFullPoolLegacyPublisherLocales,
+    /** Entire legacy grid + generics × all locales every time. */
+    rssGetCellsFullPoolLegacyFullEuropeGrid: rssCellsFullPoolLegacyFullGrid,
+  };
+}
+
+function tokenizeForCluster(value: string, languageCode: string): string[] {
+  const stop = clusterStopwordsForLanguage(languageCode);
   return value
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((token) => token.length >= 4)
-    .filter((token) => !CLUSTER_TOKEN_STOPWORDS.has(token));
+    .filter((token) => !stop.has(token));
 }
 
-function extractTitlePhrases(title: string): string[] {
-  const tokens = tokenizeForCluster(title);
+function extractTitlePhrases(title: string, languageCode: string): string[] {
+  const tokens = tokenizeForCluster(title, languageCode);
   const phrases: string[] = [];
   for (let i = 0; i < tokens.length; i += 1) {
     if (i < tokens.length - 1) {
@@ -995,7 +1563,8 @@ function buildExpansionQueries(scored: DiscoveredStory[]): string[] {
     }
     const seen = new Set<string>();
     seenPhraseByStory.set(i, seen);
-    const phrases = extractTitlePhrases(story.title);
+    const lang = detectTitleLanguageForCluster(story.title, story.sourceLanguage);
+    const phrases = extractTitlePhrases(story.title, lang);
     for (const phrase of phrases) {
       if (seen.has(phrase)) {
         continue;
@@ -1022,8 +1591,9 @@ function buildExpansionQueries(scored: DiscoveredStory[]): string[] {
   const fallbackSeeds = (() => {
     const tokenCounts = new Map<string, number>();
     for (const story of eligible) {
+      const lang = detectTitleLanguageForCluster(story.title, story.sourceLanguage);
       const seen = new Set<string>();
-      for (const token of tokenizeForCluster(story.title)) {
+      for (const token of tokenizeForCluster(story.title, lang)) {
         if (seen.has(token)) {
           continue;
         }
@@ -1056,44 +1626,80 @@ function buildExpansionQueries(scored: DiscoveredStory[]): string[] {
 }
 
 async function discoverFromGoogleNewsQueries(queries: string[], sourcePrefix: string): Promise<DiscoveredStory[]> {
-  const locales = loadEuropeGoogleNewsLocales();
+  const localesFull = loadEuropeGoogleNewsLocales();
   const discovered: DiscoveredStory[] = [];
   const seen = new Set<string>();
   // Google News RSS search returns up to 100 items per request; each query runs per locale edition.
   const perRequestLimit = 100;
-  const totalRequests = queries.length * locales.length;
+  const totalRequests = countGoogleNewsRssCells(queries, localesFull);
   let requestIndex = 0;
+  const gridStartedAt = Date.now();
 
   logDiscoveryProgress('google-news-start', {
+    sourcePrefix,
     queryCount: queries.length,
-    localeCount: locales.length,
+    localeCount: localesFull.length,
     rssRequests: totalRequests,
     totalCap: GOOGLE_NEWS_TOTAL_CAP,
+    logEvery: DISCOVERY_PROGRESS_GOOGLE_NEWS_EVERY,
+    logEveryHttp: DISCOVERY_LOG_EVERY_GOOGLE_NEWS_HTTP,
+    logFetchLifecycle: DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE,
   });
 
-  for (const query of queries) {
-    for (const locale of locales) {
+  for (let queryIdx = 0; queryIdx < queries.length; queryIdx += 1) {
+    const query = queries[queryIdx]!;
+    const queryLocales = localesForGoogleNewsPublisherQuery(query, localesFull);
+    for (let localeIdx = 0; localeIdx < queryLocales.length; localeIdx += 1) {
+      const locale = queryLocales[localeIdx]!;
       requestIndex += 1;
 
       if (discovered.length >= GOOGLE_NEWS_TOTAL_CAP) {
+        const rssRequestsPct =
+          totalRequests > 0 ? Number(((requestIndex / totalRequests) * 100).toFixed(1)) : 100;
         logDiscoveryProgress('google-news-complete', {
+          sourcePrefix,
+          reason: 'total_cap',
           discovered: discovered.length,
           cappedAtTotal: GOOGLE_NEWS_TOTAL_CAP,
+          requestIndex,
+          rssRequests: totalRequests,
+          rssRequestsPct,
+          elapsedMs: Date.now() - gridStartedAt,
         });
         return discovered;
       }
 
-      if (requestIndex === 1 || requestIndex % 40 === 0) {
-        logDiscoveryProgress('google-news-running', {
-          requestIndex,
-          rssRequests: totalRequests,
-          discovered: discovered.length,
-        });
-      }
-
       const rssUrl = buildGoogleNewsRssUrl(query, locale);
+      let rssItemCount = 0;
+      let addedForRequest = 0;
+      let skippedFreshness = 0;
+      let skippedDup = 0;
+      let fetchOk = false;
+      let httpStatus = 0;
+      let fromCache = false;
+      let fetchError = false;
+      let httpDurationMs: number | undefined;
+      let httpNetworkAttempts: number | undefined;
 
       try {
+        if (DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE) {
+          logDiscoveryProgress('google-news-rss', {
+            phase: 'fetch-start',
+            sourcePrefix,
+            requestIndex,
+            rssRequests: totalRequests,
+            localeId: locale.id,
+            queryPreview: truncateForProgress(query, 96),
+            rssUrlHost: (() => {
+              try {
+                return new URL(rssUrl).hostname;
+              } catch {
+                return undefined;
+              }
+            })(),
+          });
+        }
+
         const response = await fetchTextWithCache(rssUrl, {
           headers: {
             'User-Agent': 'FreedomTimes-Local-Agent/0.1',
@@ -1101,54 +1707,256 @@ async function discoverFromGoogleNewsQueries(queries: string[], sourcePrefix: st
           },
         });
 
-        if (!response.ok) {
-          continue;
-        }
+        fetchOk = response.ok;
+        httpStatus = response.status;
+        fromCache = response.fromCache;
+        httpDurationMs = response.requestDurationMs;
+        httpNetworkAttempts = response.networkAttempts;
 
-        const parsed = parseGoogleNewsFeed(response.text);
-
-        let addedForRequest = 0;
-
-        for (const item of parsed) {
-          if (discovered.length >= GOOGLE_NEWS_TOTAL_CAP || addedForRequest >= perRequestLimit) {
-            break;
-          }
-
-          if (!isWithinFreshnessWindow(item.publishedAt)) {
-            continue;
-          }
-
-          let selectedUrl = item.originalUrlFromMetadata;
-          if (!selectedUrl) {
-            selectedUrl = await resolveGoogleNewsLink(item.link);
-          }
-
-          if (seen.has(selectedUrl)) {
-            continue;
-          }
-
-          seen.add(selectedUrl);
-          discovered.push({
-            url: selectedUrl,
-            title: item.title,
-            publishedAt: item.publishedAt,
-            sourceFeed: `${sourcePrefix}[${locale.id}]:${query}`,
-            sourceFormat: 'rss',
-            sourceCategory: 'aggregator-feed',
-            requiresUrlResolution: true,
-            publisherName: item.publisherName,
-            publisherUrl: item.publisherUrl,
+        if (DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE) {
+          logDiscoveryProgress('google-news-rss', {
+            phase: 'fetch-done',
+            sourcePrefix,
+            requestIndex,
+            localeId: locale.id,
+            queryPreview: truncateForProgress(query, 96),
+            httpDurationMs: response.requestDurationMs,
+            networkAttempts: response.networkAttempts,
+            fromCache: response.fromCache,
+            httpStatus: response.status,
+            fetchOk: response.ok,
           });
-          addedForRequest += 1;
         }
-      } catch {
-        // Continue with remaining locale/query pairs.
+
+        if (DISCOVERY_LOG_EVERY_GOOGLE_NEWS_HTTP) {
+          logDiscoveryProgress('google-news-http', {
+            sourcePrefix,
+            requestIndex,
+            localeId: locale.id,
+            queryPreview: truncateForProgress(query, 96),
+            httpDurationMs: response.requestDurationMs,
+            networkAttempts: response.networkAttempts,
+            fromCache: response.fromCache,
+            httpStatus: response.status,
+            fetchOk: response.ok,
+          });
+        }
+
+        if (!response.ok) {
+          // fall through to logging
+        } else {
+          const parsed = parseGoogleNewsFeed(response.text);
+          rssItemCount = parsed.length;
+          let rssItemsMissingMetadata = 0;
+          for (const item of parsed) {
+            if (!item.originalUrlFromMetadata) {
+              rssItemsMissingMetadata += 1;
+            }
+          }
+
+          const logPostprocess =
+            DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE && rssItemsMissingMetadata > 0;
+          const postprocessStartedAt = logPostprocess ? Date.now() : 0;
+          if (logPostprocess) {
+            logDiscoveryProgress('google-news-rss', {
+              phase: 'postprocess-start',
+              sourcePrefix,
+              requestIndex,
+              rssRequests: totalRequests,
+              localeId: locale.id,
+              queryPreview: truncateForProgress(query, 96),
+              rssItemCount,
+              rssItemsMissingMetadata,
+              linkResolveConcurrency: GOOGLE_NEWS_LINK_RESOLVE_CONCURRENCY,
+            });
+          }
+
+          const pooledLinkResolver = createPooledUrlResolver(
+            GOOGLE_NEWS_LINK_RESOLVE_CONCURRENCY,
+            resolveGoogleNewsLink,
+          );
+          const prefetchWindow =
+            GOOGLE_NEWS_LINK_RESOLVE_CONCURRENCY * GOOGLE_NEWS_LINK_PREFETCH_MULT;
+
+          let resolvedLinkCount = 0;
+          let prefetchScheduledThrough = 0;
+
+          for (let i = 0; i < parsed.length; i += 1) {
+            const item = parsed[i]!;
+
+            const prefetchTarget = Math.min(i + prefetchWindow, parsed.length);
+            while (prefetchScheduledThrough < prefetchTarget) {
+              const pj = parsed[prefetchScheduledThrough]!;
+              prefetchScheduledThrough += 1;
+              if (!isWithinFreshnessWindow(pj.publishedAt)) {
+                continue;
+              }
+              if (!pj.originalUrlFromMetadata) {
+                pooledLinkResolver.schedule(pj.link);
+              }
+            }
+
+            if (discovered.length >= GOOGLE_NEWS_TOTAL_CAP || addedForRequest >= perRequestLimit) {
+              break;
+            }
+
+            if (!isWithinFreshnessWindow(item.publishedAt)) {
+              skippedFreshness += 1;
+              continue;
+            }
+
+            let selectedUrl = item.originalUrlFromMetadata;
+            if (!selectedUrl) {
+              selectedUrl = await pooledLinkResolver.get(item.link);
+              resolvedLinkCount += 1;
+              if (logPostprocess) {
+                const every = DISCOVERY_PROGRESS_GOOGLE_NEWS_LINK_RESOLVE_EVERY;
+                if (resolvedLinkCount === 1 || resolvedLinkCount % every === 0) {
+                  logDiscoveryProgress('google-news-rss', {
+                    phase: 'resolve-link-progress',
+                    sourcePrefix,
+                    requestIndex,
+                    rssRequests: totalRequests,
+                    localeId: locale.id,
+                    queryPreview: truncateForProgress(query, 96),
+                    resolvedLinkCount,
+                    rssItemsMissingMetadata,
+                    resolveLinksElapsedMs: Date.now() - postprocessStartedAt,
+                  });
+                }
+              }
+            }
+
+            if (seen.has(selectedUrl)) {
+              skippedDup += 1;
+              continue;
+            }
+
+            seen.add(selectedUrl);
+            discovered.push({
+              url: selectedUrl,
+              title: item.title,
+              publishedAt: item.publishedAt,
+              sourceFeed: `${sourcePrefix}[${locale.id}]:${query}`,
+              sourceFormat: 'rss',
+              sourceCategory: 'aggregator-feed',
+              requiresUrlResolution: true,
+              publisherName: item.publisherName,
+              publisherUrl: item.publisherUrl,
+            });
+            addedForRequest += 1;
+          }
+
+          if (logPostprocess) {
+            logDiscoveryProgress('google-news-rss', {
+              phase: 'postprocess-done',
+              sourcePrefix,
+              requestIndex,
+              rssRequests: totalRequests,
+              localeId: locale.id,
+              queryPreview: truncateForProgress(query, 96),
+              rssItemCount,
+              rssItemsMissingMetadata,
+              resolvedLinkCount,
+              postprocessElapsedMs: Date.now() - postprocessStartedAt,
+              addedUniqueThisRequest: addedForRequest,
+              skippedFreshnessThisRequest: skippedFreshness,
+              skippedDupThisRequest: skippedDup,
+            });
+          }
+        }
+      } catch (error) {
+        fetchError = true;
+        if (DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE) {
+          logDiscoveryProgress('google-news-rss', {
+            phase: 'fetch-threw',
+            sourcePrefix,
+            requestIndex,
+            localeId: locale.id,
+            queryPreview: truncateForProgress(query, 96),
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      const elapsedMs = Date.now() - gridStartedAt;
+      const avgMsPerRequest = requestIndex > 0 ? elapsedMs / requestIndex : 0;
+      const remainingRequests = totalRequests - requestIndex;
+      const etaMs =
+        remainingRequests > 0 && avgMsPerRequest > 0 ? Math.round(remainingRequests * avgMsPerRequest) : 0;
+
+      const shouldLogProgress =
+        requestIndex === 1 ||
+        requestIndex === totalRequests ||
+        requestIndex % DISCOVERY_PROGRESS_GOOGLE_NEWS_EVERY === 0;
+
+      if (shouldLogProgress) {
+        const rssRequestsPct =
+          totalRequests > 0 ? Number(((requestIndex / totalRequests) * 100).toFixed(1)) : 100;
+        logDiscoveryProgress('google-news-running', {
+          sourcePrefix,
+          requestIndex,
+          rssRequests: totalRequests,
+          rssRequestsPct,
+          queryIndex: queryIdx + 1,
+          queryCount: queries.length,
+          queriesPct:
+            queries.length > 0
+              ? Number((((queryIdx + (localeIdx + 1) / queryLocales.length) / queries.length) * 100).toFixed(1))
+              : 100,
+          localeIndex: localeIdx + 1,
+          localeCount: queryLocales.length,
+          localeId: locale.id,
+          queryPreview: truncateForProgress(query, 96),
+          discovered: discovered.length,
+          rssItemCount,
+          addedUniqueThisRequest: addedForRequest,
+          skippedFreshnessThisRequest: skippedFreshness,
+          skippedDupThisRequest: skippedDup,
+          fetchOk,
+          httpStatus,
+          fromCache,
+          fetchError,
+          httpDurationMs,
+          networkAttempts: httpNetworkAttempts,
+          elapsedMs,
+          etaMs,
+        });
+      }
+
+      if (!fetchOk && httpStatus === 503 && GOOGLE_NEWS_RSS_AFTER_503_MS > 0) {
+        if (DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE) {
+          logDiscoveryProgress('google-news-rss', {
+            phase: 'pace-after-503',
+            sourcePrefix,
+            requestIndex,
+            sleepMs: GOOGLE_NEWS_RSS_AFTER_503_MS,
+          });
+        }
+        await sleepMs(GOOGLE_NEWS_RSS_AFTER_503_MS);
+      }
+      if (!fromCache && GOOGLE_NEWS_RSS_REQUEST_GAP_MS > 0) {
+        if (DISCOVERY_LOG_GOOGLE_NEWS_FETCH_LIFECYCLE) {
+          logDiscoveryProgress('google-news-rss', {
+            phase: 'pace-between-requests',
+            sourcePrefix,
+            requestIndex,
+            sleepMs: GOOGLE_NEWS_RSS_REQUEST_GAP_MS,
+          });
+        }
+        await sleepMs(GOOGLE_NEWS_RSS_REQUEST_GAP_MS);
       }
     }
   }
 
   logDiscoveryProgress('google-news-complete', {
+    sourcePrefix,
+    reason: 'done',
     discovered: discovered.length,
+    requestIndex,
+    rssRequests: totalRequests,
+    rssRequestsPct: 100,
+    elapsedMs: Date.now() - gridStartedAt,
   });
 
   return discovered;
@@ -1280,6 +2088,7 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
 
   logDiscoveryProgress('start', {
     enabledFeedCount: FEEDS.filter((feed) => feed.enabled).length,
+    phases: ['newsdata', 'google-news', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion'],
   });
 
   try {
@@ -1301,16 +2110,36 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
 
   logDiscoveryProgress('feeds-start', {
     feedCount: uniqueFeeds.length,
+    logEvery: DISCOVERY_PROGRESS_FEEDS_EVERY,
   });
+
+  const feedsStartedAt = Date.now();
 
   for (const feed of uniqueFeeds) {
     feedIndex += 1;
 
-    if (feedIndex === 1 || feedIndex % 25 === 0) {
+    const shouldLogFeed =
+      feedIndex === 1 ||
+      feedIndex === uniqueFeeds.length ||
+      feedIndex % DISCOVERY_PROGRESS_FEEDS_EVERY === 0;
+
+    if (shouldLogFeed) {
+      const feedsPct =
+        uniqueFeeds.length > 0 ? Number(((feedIndex / uniqueFeeds.length) * 100).toFixed(1)) : 100;
+      const elapsedMs = Date.now() - feedsStartedAt;
+      const avgMsPerFeed = feedIndex > 0 ? elapsedMs / feedIndex : 0;
+      const remainingFeeds = uniqueFeeds.length - feedIndex;
+      const etaMs =
+        remainingFeeds > 0 && avgMsPerFeed > 0 ? Math.round(remainingFeeds * avgMsPerFeed) : 0;
       logDiscoveryProgress('feeds-running', {
         feedIndex,
         feedCount: uniqueFeeds.length,
+        feedsPct,
+        feedId: feed.id,
+        feedTitle: truncateForProgress(feed.title, 80),
         discovered: discovered.length,
+        elapsedMs,
+        etaMs,
       });
     }
 
@@ -1339,10 +2168,12 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
   });
 
   const deduped = Array.from(new Map(discovered.map((item) => [item.url, item])).values());
+  logDiscoveryProgress('enrich-published-at-start', { deduped: deduped.length });
   const enriched = await enrichPublishedAtForMissing(deduped);
+  logDiscoveryProgress('enrich-published-at-complete', { enriched: enriched.length });
   const fresh = enriched.filter((item) => isWithinFreshnessWindow(item.publishedAt));
 
-  console.log('[agent] discovery freshness filter', {
+  logDiscoveryProgress('freshness-filter', {
     maxAgeHours: DISCOVERY_MAX_AGE_HOURS,
     input: enriched.length,
     kept: fresh.length,

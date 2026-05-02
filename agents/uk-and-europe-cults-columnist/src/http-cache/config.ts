@@ -26,6 +26,40 @@ export const HTTP_FETCH_TIMEOUT_MS = Math.max(
     DEFAULT_HTTP_FETCH_TIMEOUT_MS,
 );
 
+/** Transient HTTP statuses: retry fetch up to HTTP_FETCH_MAX_ATTEMPTS with exponential backoff. */
+export const HTTP_FETCH_MAX_ATTEMPTS = Math.max(
+  1,
+  Math.min(
+    10,
+    Number.parseInt(process.env.HTTP_FETCH_MAX_ATTEMPTS ?? '4', 10) || 4,
+  ),
+);
+
+export const HTTP_FETCH_RETRY_BASE_MS = Math.max(
+  0,
+  Number.parseInt(process.env.HTTP_FETCH_RETRY_BASE_MS ?? '800', 10) || 800,
+);
+
+/** Upper bound for a single retry wait (Retry-After may extend with parseRetryAfter). */
+export const HTTP_FETCH_RETRY_MAX_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.HTTP_FETCH_RETRY_MAX_MS ?? '90000', 10) || 90000,
+);
+
+export const HTTP_FETCH_RETRYABLE_STATUS_CODES: Set<number> = (() => {
+  const csv =
+    process.env.HTTP_FETCH_RETRYABLE_STATUS_CODES?.trim() || '408,429,502,503,504';
+  return new Set(
+    csv
+      .split(',')
+      .map((value) => Number.parseInt(value.trim(), 10))
+      .filter((value) => Number.isFinite(value) && value >= 100),
+  );
+})();
+
+export const HTTP_FETCH_RETRY_NETWORK_ERRORS =
+  (process.env.HTTP_FETCH_RETRY_NETWORK_ERRORS ?? 'true').toLowerCase() !== 'false';
+
 export const HTTP_ERROR_CACHE_TTL_SECONDS = Math.max(
   0,
   Number.parseInt(process.env.HTTP_ERROR_CACHE_TTL_SECONDS ?? `${DEFAULT_HTTP_ERROR_CACHE_TTL_SECONDS}`, 10) ||

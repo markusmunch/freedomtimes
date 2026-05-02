@@ -111,9 +111,24 @@ function loadWatchlistSites(): string[] {
   return expectStringArray(parsed, 'watchlist-sites');
 }
 
+function extractGoogleNewsQueryGroups(parsed: DiscoveryConfig): Record<string, string[]> {
+  const definitions = parsed.googleNewsQueryDefinitions;
+  if (!definitions || typeof definitions !== 'object' || Array.isArray(definitions)) {
+    return {};
+  }
+
+  const groups = (definitions as GoogleNewsQueryDefinitions).groups;
+  if (!groups || typeof groups !== 'object' || Array.isArray(groups)) {
+    return {};
+  }
+
+  return expectStringRecordOfArrays(groups, 'googleNewsQueryDefinitions.groups');
+}
+
 function loadDiscoveryConfig(): {
   googleNewsCountryTerms: string[];
   googleNewsGenericQueries: string[];
+  googleNewsQueryGroups: Record<string, string[]>;
   newsdataCountryCodes: string;
   newsdataLanguages: string;
   newsdataQueries: string[];
@@ -134,6 +149,7 @@ function loadDiscoveryConfig(): {
       parsed.googleNewsQueryDefinitions,
       fallbackGoogleQueries,
     ),
+    googleNewsQueryGroups: extractGoogleNewsQueryGroups(parsed),
     newsdataCountryCodes: expectString(parsed.newsdataCountryCodes, 'newsdataCountryCodes'),
     newsdataLanguages: expectString(parsed.newsdataLanguages, 'newsdataLanguages'),
     newsdataQueries: expectStringArray(parsed.newsdataQueries, 'newsdataQueries'),
@@ -224,6 +240,7 @@ const MERGED_DISCOVERY_CONFIG = (() => {
         ? expectStringArray(DISCOVERY_FOCUS_INPUT.googleNewsGenericQueries, 'focus.googleNewsGenericQueries')
         : []),
     ]),
+    googleNewsQueryGroups: DISCOVERY_CONFIG.googleNewsQueryGroups,
     newsdataCountryCodes: DISCOVERY_FOCUS_INPUT.newsdataCountryCodes
       ? mergeCsv(
           DISCOVERY_CONFIG.newsdataCountryCodes,
@@ -282,6 +299,8 @@ export const PRIORITY_WATCHLIST_HOSTS = MERGED_WATCHLIST_SITES;
 export const GOOGLE_NEWS_WATCHLIST_SITES = MERGED_WATCHLIST_SITES;
 export const GOOGLE_NEWS_COUNTRY_TERMS = MERGED_DISCOVERY_CONFIG.googleNewsCountryTerms;
 export const GOOGLE_NEWS_GENERIC_QUERIES = MERGED_DISCOVERY_CONFIG.googleNewsGenericQueries;
+/** Named OR-groups from discovery-config.json `googleNewsQueryDefinitions.groups` (not expanded templates). */
+export const GOOGLE_NEWS_QUERY_GROUPS = MERGED_DISCOVERY_CONFIG.googleNewsQueryGroups;
 export const NEWSDATA_COUNTRY_CODES = MERGED_DISCOVERY_CONFIG.newsdataCountryCodes;
 export const NEWSDATA_LANGUAGES = MERGED_DISCOVERY_CONFIG.newsdataLanguages;
 export const NEWSDATA_QUERIES = MERGED_DISCOVERY_CONFIG.newsdataQueries;

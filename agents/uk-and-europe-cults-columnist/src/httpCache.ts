@@ -5,6 +5,11 @@ import {
   HTTP_ERROR_CACHE_TTL_SECONDS,
   HTTP_CACHE_MAX_ENTRIES,
   HTTP_CACHE_TTL_MINUTES,
+  HTTP_FETCH_MAX_ATTEMPTS,
+  HTTP_FETCH_RETRY_BASE_MS,
+  HTTP_FETCH_RETRY_MAX_MS,
+  HTTP_FETCH_RETRY_NETWORK_ERRORS,
+  HTTP_FETCH_RETRYABLE_STATUS_CODES,
   HTTP_FETCH_TIMEOUT_MS,
   HTTP_USER_AGENT,
 } from './http-cache/config.js';
@@ -41,6 +46,108 @@ function isFresh(entry: CachedEntry): boolean {
 
 function shouldCacheStatus(status: number): boolean {
   return status >= 200 && status < 300 ? true : HTTP_ERROR_CACHE_TTL_SECONDS > 0;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryBackoffMs(attemptAfterFailure: number, status?: number): number {
+  const base = HTTP_FETCH_RETRY_BASE_MS;
+  let exp = base * 2 ** Math.max(0, attemptAfterFailure - 1);
+  if (status === 503 || status === 429) {
+    exp = Math.max(exp, 2500);
+    exp = Math.floor(exp * 1.75);
+  }
+  return Math.min(exp, HTTP_FETCH_RETRY_MAX_MS);
+}
+
+/** Honor Retry-After (seconds or HTTP-date); cap to avoid hanging the agent. */
+function parseRetryAfterMs(headers: Headers): number {
+  const raw = headers.get('retry-after')?.trim();
+  if (!raw) {
+    return 0;
+  }
+
+  const asInt = Number.parseInt(raw, 10);
+  if (Number.isFinite(asInt) && asInt >= 0) {
+    return Math.min(asInt * 1000, HTTP_FETCH_RETRY_MAX_MS);
+  }
+
+  const when = Date.parse(raw);
+  if (Number.isFinite(when)) {
+    return Math.min(Math.max(0, when - Date.now()), HTTP_FETCH_RETRY_MAX_MS);
+  }
+
+  return 0;
+}
+
+function isRetryableNetworkError(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return false;
+  }
+  return error instanceof TypeError;
+}
+
+/**
+ * Single logical fetch with retries for transient HTTP statuses and (optionally) network errors.
+ */
+async function fetchTextThroughNetwork(
+  url: string,
+  init: RequestInit | undefined,
+  requestHeaders: Headers,
+): Promise<{ response: Response; text: string; attempts: number; durationMs: number }> {
+  const outerStarted = Date.now();
+  const maxAttempts = HTTP_FETCH_MAX_ATTEMPTS;
+  let lastResponse: Response | undefined;
+  let lastText = '';
+  let attempts = 0;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    attempts = attempt;
+    try {
+      const response = await fetch(url, {
+        ...init,
+        headers: requestHeaders,
+        signal: init?.signal ?? AbortSignal.timeout(HTTP_FETCH_TIMEOUT_MS),
+      });
+      const text = await response.text();
+
+      const shouldRetryStatus =
+        !response.ok &&
+        HTTP_FETCH_RETRYABLE_STATUS_CODES.has(response.status) &&
+        attempt < maxAttempts;
+
+      if (!shouldRetryStatus) {
+        return {
+          response,
+          text,
+          attempts,
+          durationMs: Date.now() - outerStarted,
+        };
+      }
+
+      lastResponse = response;
+      lastText = text;
+      const headerWait = parseRetryAfterMs(response.headers);
+      const computed = retryBackoffMs(attempt, response.status);
+      await sleep(Math.max(computed, headerWait));
+    } catch (error) {
+      const retryNet =
+        HTTP_FETCH_RETRY_NETWORK_ERRORS && isRetryableNetworkError(error) && attempt < maxAttempts;
+      if (!retryNet) {
+        throw error;
+      }
+      await sleep(retryBackoffMs(attempt));
+    }
+  }
+
+  return {
+    response: lastResponse!,
+    text: lastText,
+    attempts,
+    durationMs: Date.now() - outerStarted,
+  };
 }
 
 function mergeRequestHeaders(headersInit: HeadersInit | undefined): Headers {
@@ -205,18 +312,16 @@ export async function fetchTextWithCache(url: string, init?: RequestInit): Promi
   const requestHeaders = mergeRequestHeaders(init?.headers);
 
   if (!HTTP_CACHE_ENABLED) {
-    const response = await fetch(url, {
-      ...init,
-      headers: requestHeaders,
-      signal: init?.signal ?? AbortSignal.timeout(HTTP_FETCH_TIMEOUT_MS),
-    });
+    const { response, text, attempts, durationMs } = await fetchTextThroughNetwork(url, init, requestHeaders);
     return {
       ok: response.ok,
       status: response.status,
       url: response.url,
       headers: normalizeHeaders(response.headers),
-      text: await response.text(),
+      text,
       fromCache: false,
+      requestDurationMs: durationMs,
+      networkAttempts: attempts,
     };
   }
 
@@ -226,6 +331,7 @@ export async function fetchTextWithCache(url: string, init?: RequestInit): Promi
   const cached = readEntry(cacheKey);
 
   if (cached && isFresh(cached)) {
+    const cacheReadStarted = Date.now();
     return {
       ok: cached.status >= 200 && cached.status < 300,
       status: cached.status,
@@ -233,6 +339,8 @@ export async function fetchTextWithCache(url: string, init?: RequestInit): Promi
       headers: cached.headers,
       text: cached.body,
       fromCache: true,
+      requestDurationMs: Date.now() - cacheReadStarted,
+      networkAttempts: 0,
     };
   }
 
@@ -242,12 +350,11 @@ export async function fetchTextWithCache(url: string, init?: RequestInit): Promi
   }
 
   const fetchPromise = (async (): Promise<CachedFetchResult> => {
-    const response = await fetch(url, {
-      ...init,
-      headers: requestHeaders,
-      signal: init?.signal ?? AbortSignal.timeout(HTTP_FETCH_TIMEOUT_MS),
-    });
-    const body = await response.text();
+    const { response, text: body, attempts, durationMs } = await fetchTextThroughNetwork(
+      url,
+      init,
+      requestHeaders,
+    );
     const responseHeaders = normalizeHeaders(response.headers);
 
     if (shouldCacheStatus(response.status)) {
@@ -267,6 +374,8 @@ export async function fetchTextWithCache(url: string, init?: RequestInit): Promi
       headers: responseHeaders,
       text: body,
       fromCache: false,
+      requestDurationMs: durationMs,
+      networkAttempts: attempts,
     };
   })();
 

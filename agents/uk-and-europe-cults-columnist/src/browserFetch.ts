@@ -2,6 +2,7 @@ import type { CachedFetchResult } from './http-cache/types.js';
 import { BROWSER_RENDER_TIMEOUT_MS, HTTP_USER_AGENT } from './http-cache/config.js';
 
 export async function fetchTextWithBrowserRender(url: string): Promise<CachedFetchResult> {
+  const renderStarted = Date.now();
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless: true });
 
@@ -35,6 +36,8 @@ export async function fetchTextWithBrowserRender(url: string): Promise<CachedFet
         headers: {},
         text: html,
         fromCache: false,
+        requestDurationMs: Date.now() - renderStarted,
+        networkAttempts: 1,
       };
     } finally {
       await context.close();

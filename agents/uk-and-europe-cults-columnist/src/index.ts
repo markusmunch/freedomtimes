@@ -57,8 +57,15 @@ function mapToSortedEntries(map: Map<string, number>, limit: number): Array<{ ke
     .map(([key, count]) => ({ key, count }));
 }
 
+const PIPELINE_PROGRESS_EVERY = Math.max(
+  1,
+  Number.parseInt(process.env.PIPELINE_PROGRESS_EVERY ?? '5', 10) || 5,
+);
+
 function logProgress(stage: string, data: Record<string, unknown>): void {
-  console.log(`[agent][progress] ${JSON.stringify({ scope: 'pipeline', stage, ...data })}`);
+  console.log(
+    `[agent][progress] ${JSON.stringify({ scope: 'pipeline', at: new Date().toISOString(), stage, ...data })}`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -158,10 +165,13 @@ async function main(): Promise<void> {
   const blockedHosts = new Set<string>();
   const failedUrls: Array<{ url: string; host: string | null; errorMessage: string; timestamp: string }> = [];
 
+  const pipelineStartedAt = Date.now();
+
   logProgress('processing-start', {
     candidatePool: totalCandidates,
     targetApproved: maxApproved ?? 'unbounded',
     concurrency,
+    logEvery: PIPELINE_PROGRESS_EVERY,
   });
 
   async function worker(): Promise<void> {
@@ -183,7 +193,11 @@ async function main(): Promise<void> {
         skippedBlockedHost += 1;
         processed += 1;
 
-        if (processed === 1 || processed % 10 === 0 || processed === totalCandidates) {
+        if (processed === 1 || processed % PIPELINE_PROGRESS_EVERY === 0 || processed === totalCandidates) {
+          const elapsedMs = Date.now() - pipelineStartedAt;
+          const avgMs = processed > 0 ? elapsedMs / processed : 0;
+          const remaining = totalCandidates - processed;
+          const etaMs = remaining > 0 && avgMs > 0 ? Math.round(remaining * avgMs) : 0;
           logProgress('processing-running', {
             processed,
             totalCandidates,
@@ -193,6 +207,8 @@ async function main(): Promise<void> {
             rejected,
             errored,
             skippedBlockedHost,
+            elapsedMs,
+            etaMs,
           });
         }
 
@@ -269,7 +285,11 @@ async function main(): Promise<void> {
       } finally {
         processed += 1;
 
-        if (processed === 1 || processed % 10 === 0 || processed === totalCandidates) {
+        if (processed === 1 || processed % PIPELINE_PROGRESS_EVERY === 0 || processed === totalCandidates) {
+          const elapsedMs = Date.now() - pipelineStartedAt;
+          const avgMs = processed > 0 ? elapsedMs / processed : 0;
+          const remaining = totalCandidates - processed;
+          const etaMs = remaining > 0 && avgMs > 0 ? Math.round(remaining * avgMs) : 0;
           logProgress('processing-running', {
             processed,
             totalCandidates,
@@ -279,6 +299,8 @@ async function main(): Promise<void> {
             rejected,
             errored,
             skippedBlockedHost,
+            elapsedMs,
+            etaMs,
           });
         }
       }

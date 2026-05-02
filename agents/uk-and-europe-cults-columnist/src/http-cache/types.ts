@@ -18,4 +18,8 @@ export type CachedFetchResult = {
   headers: Record<string, string>;
   text: string;
   fromCache: boolean;
+  /** Wall-clock ms for this logical call (cache read is near-instant; network includes retries + backoff). */
+  requestDurationMs?: number;
+  /** HTTP attempts for the last network round-trip (1 if no retry); 0 on cache hit. */
+  networkAttempts?: number;
 };
