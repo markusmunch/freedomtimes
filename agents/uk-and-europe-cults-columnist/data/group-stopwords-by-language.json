@@ -1,4 +1,5 @@
 {
+  "_docs": "Editorial stopword tokens merged into cluster phrase extraction (see discoverStories loadClusterStopwordsByLang + data/cluster-token-stopwords.json). Prefer extending this file per language rather than duplicating long lists only in cluster-token-stopwords.json.",
   "en": [
     "about", "after", "again", "against", "also", "amid", "among", "been", "before", "behind", "being",
     "between", "could", "does", "from", "have", "into", "more", "most", "over", "said", "says", "story",

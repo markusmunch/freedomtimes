@@ -8,6 +8,12 @@
       "cult",
       "cults"
     ],
+    "isHarmSignals": [
+      "þvingandi stjórn",
+      "heilaþvottur",
+      "andleg misnotkun",
+      "trúarleg misnotkun"
+    ],
     "isEuropeCountryOr": [
       "Evrópa",
       "Europe",

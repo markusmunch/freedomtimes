@@ -124,6 +124,30 @@ async function main(): Promise<void> {
       }
     });
 
+    mkdirSync('reports', { recursive: true });
+    writeFileSync(
+      'reports/last-run-candidates.json',
+      `${JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          count: discovered.length,
+          urls: discovered.map((item) => item.url),
+        },
+        null,
+        2,
+      )}\n`,
+      'utf-8',
+    );
+
+    const scoreRows = discovered.map((item) => ({
+      url: item.url,
+      score: item.discoveryScore ?? null,
+      scoreBreakdown: item.discoveryScoreBreakdown ?? null,
+      sourceFeed: item.sourceFeed,
+    }));
+    const maxScoreDetailsRows = Math.max(0, Number.parseInt(process.env.LOG_CANDIDATE_SCORE_DETAILS_MAX ?? '80', 10) || 80);
+    const includeScoreDetails = discovered.length <= maxScoreDetailsRows;
+
     console.log('[agent] discovered candidate stories', {
       count: discovered.length,
       targetApproved: maxApproved ?? 'unbounded',
@@ -131,14 +155,10 @@ async function main(): Promise<void> {
       sourceCounts,
       watchlistHitCount: watchlistHits.length,
       watchlistHitUrls: watchlistHits.map((item) => item.url),
-      candidateScoreDetails: JSON.stringify(
-        discovered.map((item) => ({
-          url: item.url,
-          score: item.discoveryScore ?? null,
-          scoreBreakdown: item.discoveryScoreBreakdown ?? null,
-          sourceFeed: item.sourceFeed,
-        })),
-      ),
+      candidateListFile: 'reports/last-run-candidates.json',
+      candidateScoreDetails: includeScoreDetails
+        ? JSON.stringify(scoreRows)
+        : `[omitted ${discovered.length} rows; set LOG_CANDIDATE_SCORE_DETAILS_MAX or read candidateListFile]`,
     });
   }
 
@@ -164,6 +184,16 @@ async function main(): Promise<void> {
   const hostFailureCounts = new Map<string, number>();
   const blockedHosts = new Set<string>();
   const failedUrls: Array<{ url: string; host: string | null; errorMessage: string; timestamp: string }> = [];
+  const pipelineRejections: Array<{
+    candidateUrl: string;
+    reason: string;
+    effectiveUrl: string;
+    title?: string;
+    textPreview?: string;
+    reliabilityScore: number;
+    reliabilityReasons: string[];
+    relevance: { accepted: boolean; region: string; confidence: number; reasons: string[] };
+  }> = [];
 
   const pipelineStartedAt = Date.now();
 
@@ -229,6 +259,21 @@ async function main(): Promise<void> {
           for (const reason of result.source.reliabilityReasons) {
             incrementCount(sourceReliabilityReasonCounts, reason);
           }
+          pipelineRejections.push({
+            candidateUrl: candidate.url,
+            reason: result.reason,
+            effectiveUrl: result.source.url,
+            title: result.title,
+            textPreview: result.textPreview,
+            reliabilityScore: result.source.reliabilityScore,
+            reliabilityReasons: [...result.source.reliabilityReasons],
+            relevance: {
+              accepted: result.relevance.accepted,
+              region: result.relevance.region,
+              confidence: result.relevance.confidence,
+              reasons: [...result.relevance.reasons],
+            },
+          });
         } else {
           accepted += 1;
 
@@ -308,6 +353,20 @@ async function main(): Promise<void> {
   }
 
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+  if (pipelineRejections.length > 0) {
+    mkdirSync('reports', { recursive: true });
+    const rejectionOut = {
+      generatedAt: new Date().toISOString(),
+      candidatePool: candidatesByUrl.size,
+      rows: pipelineRejections,
+    };
+    writeFileSync('reports/pipeline-rejections-latest.json', `${JSON.stringify(rejectionOut, null, 2)}\n`, 'utf-8');
+    console.log('[agent] pipeline rejections written', {
+      path: 'reports/pipeline-rejections-latest.json',
+      count: pipelineRejections.length,
+    });
+  }
 
   if (failedUrls.length > 0) {
     mkdirSync('reports', { recursive: true });

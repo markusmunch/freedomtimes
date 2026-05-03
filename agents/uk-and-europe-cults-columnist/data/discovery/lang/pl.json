@@ -10,6 +10,15 @@
       "cults",
       "\"kontrola umyslu\""
     ],
+    "plHarmSignals": [
+      "\"przymusowa kontrola\"",
+      "\"pranie mózgu\"",
+      "\"wykorzystywanie duchowe\"",
+      "\"nadużycie religijne\""
+    ],
+    "plPolandGeo": [
+      "Polska"
+    ],
     "plEuropeCountryOr": [
       "Europa",
       "Europe",

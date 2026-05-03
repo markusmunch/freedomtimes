@@ -38,6 +38,9 @@ export type PipelineResult =
       source: SourceMetadata;
       relevance: RelevanceResult;
       reason: string;
+      /** Present when the page was fetched and parsed (all reject stages after fetch). */
+      title?: string;
+      textPreview?: string;
     }
   | {
       status: 'drafted';

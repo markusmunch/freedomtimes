@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "daHarmSignals": [
+      "tvangskontrol",
+      "hjernevask",
+      "åndeligt misbrug",
+      "religiøst misbrug"
+    ],
     "daEuropeCountryOr": [
       "Europa",
       "Europe",

@@ -12,6 +12,15 @@
       "emprise",
       "gourou"
     ],
+    "frHarmSignals": [
+      "\"contrôle coercitif\"",
+      "\"lavage de cerveau\"",
+      "\"abus spirituel\""
+    ],
+    "frFranceBelgGeo": [
+      "France",
+      "Belgique"
+    ],
     "frEuropeCountryOr": [
       "Europe",
       "Europa",

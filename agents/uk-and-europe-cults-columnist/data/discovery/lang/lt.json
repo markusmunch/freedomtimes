@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "ltHarmSignals": [
+      "prievartinė kontrolė",
+      "smegenų plovimas",
+      "dvasinis smurtas",
+      "religinis smurtas"
+    ],
     "ltEuropeCountryOr": [
       "Europa",
       "Europe",

@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "svHarmSignals": [
+      "tvångskontroll",
+      "hjärntvätt",
+      "andligt missbruk",
+      "religiöst missbruk"
+    ],
     "svEuropeCountryOr": [
       "Europa",
       "Europe",

@@ -10,6 +10,15 @@
       "cults",
       "\"hengellinen vaara\""
     ],
+    "fiHarmSignals": [
+      "\"pakottava hallinta\"",
+      "aivopesu",
+      "\"hengellinen väkivalta\"",
+      "\"uskonnollinen väkivalta\""
+    ],
+    "fiFinlandGeo": [
+      "Suomi"
+    ],
     "fiEuropeCountryOr": [
       "Eurooppa",
       "Europe",

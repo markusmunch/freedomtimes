@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 
 type DiscoveryConfig = {
-  googleNewsCountryTerms?: unknown;
   googleNewsGenericQueries?: unknown;
   googleNewsQueryDefinitions?: unknown;
   newsdataCountryCodes?: unknown;
@@ -16,7 +15,61 @@ type GoogleNewsQueryDefinitions = {
   groups?: unknown;
   templates?: unknown;
   rawQueries?: unknown;
+  /** Same length as `templates`: hl subtags (e.g. en, fr) or arrays of subtags; `null` = all europe locales. */
+  templateLocaleHlPrefixes?: unknown;
 };
+
+export type GoogleNewsTemplateQuerySpec = {
+  query: string;
+  googleNewsLocaleIds?: string[];
+};
+
+type GoogleNewsLocaleRow = { id: string; hl: string };
+
+function loadGoogleNewsEuropeLocaleRows(): GoogleNewsLocaleRow[] {
+  const configUrl = new URL('../data/google-news-europe-locales.json', import.meta.url);
+  const raw = readFileSync(configUrl, 'utf-8');
+  const parsed = JSON.parse(raw) as { locales?: unknown };
+  if (!parsed.locales || !Array.isArray(parsed.locales)) {
+    return [];
+  }
+  const out: GoogleNewsLocaleRow[] = [];
+  for (const item of parsed.locales) {
+    if (
+      item &&
+      typeof item === 'object' &&
+      typeof (item as GoogleNewsLocaleRow).id === 'string' &&
+      typeof (item as GoogleNewsLocaleRow).hl === 'string'
+    ) {
+      out.push(item as GoogleNewsLocaleRow);
+    }
+  }
+  return out;
+}
+
+/** Primary BCP47 language subtag for matching templateLocaleHlPrefixes (en-GB → en). */
+function primaryGoogleNewsHlSubtagForConfig(hl: string): string {
+  const h = hl.trim().toLowerCase();
+  if (h === 'en-gb' || h.startsWith('en-')) {
+    return 'en';
+  }
+  return (h.split('-')[0] ?? h).trim() || 'en';
+}
+
+function localeIdsForHlSubtags(rows: GoogleNewsLocaleRow[], hlSubtags: string[]): string[] {
+  const want = new Set(hlSubtags.map((s) => s.trim().toLowerCase()).filter(Boolean));
+  if (want.size === 0) {
+    return [];
+  }
+  const ids: string[] = [];
+  for (const row of rows) {
+    const sub = primaryGoogleNewsHlSubtagForConfig(row.hl).toLowerCase();
+    if (want.has(sub)) {
+      ids.push(row.id);
+    }
+  }
+  return ids;
+}
 
 function expectStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
@@ -55,12 +108,49 @@ function formatGroupExpression(values: string[]): string {
   return `(${values.join(' OR ')})`;
 }
 
-function buildGoogleNewsQueriesFromDefinitions(
+function parseTemplateLocaleHlPrefixes(raw: unknown, templateCount: number): (string[] | null)[] {
+  if (raw === undefined) {
+    return Array.from({ length: templateCount }, () => null);
+  }
+  if (!Array.isArray(raw) || raw.length !== templateCount) {
+    throw new Error(
+      `googleNewsQueryDefinitions.templateLocaleHlPrefixes must be an array with the same length as templates (${templateCount})`,
+    );
+  }
+  const out: (string[] | null)[] = [];
+  for (const item of raw) {
+    if (item === null) {
+      out.push(null);
+    } else if (typeof item === 'string') {
+      out.push([item]);
+    } else if (Array.isArray(item) && item.every((x) => typeof x === 'string')) {
+      out.push(item as string[]);
+    } else {
+      throw new Error(
+        'googleNewsQueryDefinitions.templateLocaleHlPrefixes entries must be null, a string, or string[]',
+      );
+    }
+  }
+  return out;
+}
+
+function pinKeyForSpecs(ids: string[] | undefined): string {
+  if (!ids || ids.length === 0) {
+    return 'ALL';
+  }
+  return [...ids].sort().join(',');
+}
+
+function buildGoogleNewsTemplateQuerySpecs(
   definitionsValue: unknown,
   fallbackQueries: string[] | undefined,
-): string[] {
+  localeRows: GoogleNewsLocaleRow[],
+): GoogleNewsTemplateQuerySpec[] {
   if (definitionsValue === undefined) {
-    return fallbackQueries ?? [];
+    return (fallbackQueries ?? [])
+      .map((q) => normalizeWhitespace(q))
+      .filter(Boolean)
+      .map((query) => ({ query }));
   }
 
   if (!definitionsValue || typeof definitionsValue !== 'object' || Array.isArray(definitionsValue)) {
@@ -75,7 +165,9 @@ function buildGoogleNewsQueriesFromDefinitions(
       ? []
       : expectStringArray(definitions.rawQueries, 'googleNewsQueryDefinitions.rawQueries');
 
-  const expandedTemplates = templates.map((template) => {
+  const pinSpecs = parseTemplateLocaleHlPrefixes(definitions.templateLocaleHlPrefixes, templates.length);
+
+  const expanded: GoogleNewsTemplateQuerySpec[] = templates.map((template, idx) => {
     const query = template.replace(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (_match, groupName: string) => {
       const groupValues = groups[groupName];
       if (!groupValues) {
@@ -86,19 +178,42 @@ function buildGoogleNewsQueriesFromDefinitions(
       return formatGroupExpression(groupValues);
     });
 
-    return normalizeWhitespace(query);
+    const normalized = normalizeWhitespace(query);
+    const pin = pinSpecs[idx] ?? null;
+    const googleNewsLocaleIds =
+      pin === null || pin.length === 0
+        ? undefined
+        : localeIdsForHlSubtags(localeRows, pin);
+    return {
+      query: normalized,
+      googleNewsLocaleIds:
+        googleNewsLocaleIds && googleNewsLocaleIds.length > 0 ? googleNewsLocaleIds : undefined,
+    };
   });
 
-  const unique = new Set<string>();
-  const ordered: string[] = [];
+  for (const raw of rawQueries) {
+    expanded.push({ query: normalizeWhitespace(raw) });
+  }
 
-  for (const query of [...expandedTemplates, ...rawQueries]) {
-    const normalized = normalizeWhitespace(query);
-    if (!normalized || unique.has(normalized)) {
+  const seen = new Set<string>();
+  const ordered: GoogleNewsTemplateQuerySpec[] = [];
+  for (const spec of expanded) {
+    if (!spec.query) {
       continue;
     }
-    unique.add(normalized);
-    ordered.push(normalized);
+    const k = `${spec.query}|||${pinKeyForSpecs(spec.googleNewsLocaleIds)}`;
+    if (seen.has(k)) {
+      continue;
+    }
+    seen.add(k);
+    ordered.push(spec);
+  }
+
+  if (ordered.length === 0 && fallbackQueries?.length) {
+    return fallbackQueries
+      .map((q) => normalizeWhitespace(q))
+      .filter(Boolean)
+      .map((query) => ({ query }));
   }
 
   return ordered;
@@ -174,8 +289,8 @@ function loadMergedGoogleNewsQueryGroups(
 }
 
 function loadDiscoveryConfig(): {
-  googleNewsCountryTerms: string[];
   googleNewsGenericQueries: string[];
+  googleNewsGenericQuerySpecs: GoogleNewsTemplateQuerySpec[];
   googleNewsQueryGroups: Record<string, string[]>;
   newsdataCountryCodes: string;
   newsdataLanguages: string;
@@ -199,12 +314,16 @@ function loadDiscoveryConfig(): {
       ? { ...(definitions as Record<string, unknown>), groups: mergedQueryGroups }
       : { groups: mergedQueryGroups };
 
+  const localeRows = loadGoogleNewsEuropeLocaleRows();
+  const googleNewsGenericQuerySpecs = buildGoogleNewsTemplateQuerySpecs(
+    syntheticDefinitions,
+    fallbackGoogleQueries,
+    localeRows,
+  );
+
   return {
-    googleNewsCountryTerms: expectStringArray(parsed.googleNewsCountryTerms, 'googleNewsCountryTerms'),
-    googleNewsGenericQueries: buildGoogleNewsQueriesFromDefinitions(
-      syntheticDefinitions,
-      fallbackGoogleQueries,
-    ),
+    googleNewsGenericQueries: uniqueOrdered(googleNewsGenericQuerySpecs.map((s) => s.query)),
+    googleNewsGenericQuerySpecs,
     googleNewsQueryGroups: mergedQueryGroups,
     newsdataCountryCodes: expectString(parsed.newsdataCountryCodes, 'newsdataCountryCodes'),
     newsdataLanguages: expectString(parsed.newsdataLanguages, 'newsdataLanguages'),
@@ -246,7 +365,6 @@ function mergeCsv(base: string, extra: string): string {
 }
 
 type DiscoveryFocusInput = {
-  googleNewsCountryTerms?: unknown;
   googleNewsGenericQueries?: unknown;
   newsdataCountryCodes?: unknown;
   newsdataLanguages?: unknown;
@@ -257,6 +375,30 @@ type DiscoveryFocusInput = {
   regionalHostSuffixes?: unknown;
   focusSignalTerms?: unknown;
 };
+
+function mergeGoogleNewsGenericQuerySpecs(
+  base: GoogleNewsTemplateQuerySpec[],
+  extraQueries: string[] | undefined,
+): GoogleNewsTemplateQuerySpec[] {
+  if (!extraQueries?.length) {
+    return base;
+  }
+  const seen = new Set(
+    base.map((s) => `${s.query}|||${pinKeyForSpecs(s.googleNewsLocaleIds)}`),
+  );
+  const out = [...base];
+  for (const q of uniqueOrdered(
+    extraQueries.map((x) => normalizeWhitespace(x)).filter(Boolean),
+  )) {
+    const k = `${q}|||ALL`;
+    if (seen.has(k)) {
+      continue;
+    }
+    seen.add(k);
+    out.push({ query: q });
+  }
+  return out;
+}
 
 function loadDiscoveryFocusInput(): DiscoveryFocusInput | null {
   const inline = process.env.DISCOVERY_FOCUS_JSON?.trim();
@@ -283,19 +425,19 @@ const MERGED_DISCOVERY_CONFIG = (() => {
     return DISCOVERY_CONFIG;
   }
 
+  const googleNewsGenericQuerySpecs = mergeGoogleNewsGenericQuerySpecs(
+    DISCOVERY_CONFIG.googleNewsGenericQuerySpecs,
+    DISCOVERY_FOCUS_INPUT.googleNewsGenericQueries
+      ? expectStringArray(
+          DISCOVERY_FOCUS_INPUT.googleNewsGenericQueries,
+          'focus.googleNewsGenericQueries',
+        )
+      : undefined,
+  );
+
   return {
-    googleNewsCountryTerms: uniqueOrdered([
-      ...DISCOVERY_CONFIG.googleNewsCountryTerms,
-      ...(DISCOVERY_FOCUS_INPUT.googleNewsCountryTerms
-        ? expectStringArray(DISCOVERY_FOCUS_INPUT.googleNewsCountryTerms, 'focus.googleNewsCountryTerms')
-        : []),
-    ]),
-    googleNewsGenericQueries: uniqueOrdered([
-      ...DISCOVERY_CONFIG.googleNewsGenericQueries,
-      ...(DISCOVERY_FOCUS_INPUT.googleNewsGenericQueries
-        ? expectStringArray(DISCOVERY_FOCUS_INPUT.googleNewsGenericQueries, 'focus.googleNewsGenericQueries')
-        : []),
-    ]),
+    googleNewsGenericQuerySpecs,
+    googleNewsGenericQueries: uniqueOrdered(googleNewsGenericQuerySpecs.map((s) => s.query)),
     googleNewsQueryGroups: DISCOVERY_CONFIG.googleNewsQueryGroups,
     newsdataCountryCodes: DISCOVERY_FOCUS_INPUT.newsdataCountryCodes
       ? mergeCsv(
@@ -353,7 +495,8 @@ const MERGED_WATCHLIST_SITES = (() => {
 
 export const PRIORITY_WATCHLIST_HOSTS = MERGED_WATCHLIST_SITES;
 export const GOOGLE_NEWS_WATCHLIST_SITES = MERGED_WATCHLIST_SITES;
-export const GOOGLE_NEWS_COUNTRY_TERMS = MERGED_DISCOVERY_CONFIG.googleNewsCountryTerms;
+/** Expanded generic Google News `q=` strings with optional per-row locale pins (see `templateLocaleHlPrefixes` in discovery-config). */
+export const GOOGLE_NEWS_GENERIC_QUERY_SPECS = MERGED_DISCOVERY_CONFIG.googleNewsGenericQuerySpecs;
 export const GOOGLE_NEWS_GENERIC_QUERIES = MERGED_DISCOVERY_CONFIG.googleNewsGenericQueries;
 /** Named OR-groups from `discovery-config.json` (`groupFiles` + optional inline `groups`); not expanded templates. */
 export const GOOGLE_NEWS_QUERY_GROUPS = MERGED_DISCOVERY_CONFIG.googleNewsQueryGroups;

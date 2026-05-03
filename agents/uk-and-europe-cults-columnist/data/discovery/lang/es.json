@@ -11,6 +11,16 @@
       "\"abuso espiritual\"",
       "\"control coercitivo\""
     ],
+    "esHarmSignals": [
+      "\"control coercitivo\"",
+      "\"lavado de cerebro\"",
+      "\"abuso espiritual\"",
+      "\"abuso religioso\"",
+      "\"grupo de alto control\""
+    ],
+    "esSpainGeo": [
+      "España"
+    ],
     "esEuropeCountryOr": [
       "Europa",
       "Europe",

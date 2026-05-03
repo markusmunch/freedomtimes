@@ -18,6 +18,9 @@
     "probe:publisher-langs": "tsx scripts/probe-publisher-homepage-langs.ts",
     "split:discovery-groups": "node scripts/split-discovery-query-groups.mjs",
     "analyze:google-news-query-plan": "node scripts/analyze-google-news-query-plan.mjs",
+    "replay:rejection-review-html": "tsx scripts/replay-rejection-review-from-log.ts",
+    "export:candidates": "tsx scripts/export-candidate-urls.ts",
+    "render:rejection-review-html": "node scripts/render-pipeline-rejection-review-html.mjs",
     "e2e:smoke": "cmd /c scripts\\run-e2e-smoke.cmd 5",
     "e2e:full": "cmd /c \"cd /d %CD% && set AGENT_ENV=staging && set DISCOVERY_MAX_AGE_HOURS=168 && set DRY_RUN=true && npx tsx src/index.ts\""
   },

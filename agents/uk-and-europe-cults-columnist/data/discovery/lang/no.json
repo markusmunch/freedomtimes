@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "noHarmSignals": [
+      "tvangskontroll",
+      "hjernevasking",
+      "åndelig misbruk",
+      "religiøst misbruk"
+    ],
     "noEuropeCountryOr": [
       "Europa",
       "Europe",

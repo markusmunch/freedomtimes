@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "csHarmSignals": [
+      "donucovací kontrola",
+      "mýcení mozku",
+      "duchovní zneužívání",
+      "náboženské zneužívání"
+    ],
     "csEuropeCountryOr": [
       "Evropa",
       "Europe",

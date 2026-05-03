@@ -12,6 +12,18 @@
       "\"geistlicher missbrauch\"",
       "\"psychische manipulation\""
     ],
+    "deHarmSignals": [
+      "Zwangskontrolle",
+      "Gehirnwäsche",
+      "\"psychische Manipulation\"",
+      "\"geistlicher Missbrauch\""
+    ],
+    "deDachCountryOr": [
+      "Deutschland",
+      "Österreich",
+      "Schweiz",
+      "Liechtenstein"
+    ],
     "deEuropeCountryOr": [
       "Europa",
       "Europe",

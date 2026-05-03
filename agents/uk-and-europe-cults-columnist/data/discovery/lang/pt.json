@@ -11,6 +11,15 @@
       "\"grupo coercivo\"",
       "\"abuso espiritual\""
     ],
+    "ptHarmSignals": [
+      "\"controlo coercivo\"",
+      "\"lavagem cerebral\"",
+      "\"abuso espiritual\"",
+      "\"abuso religioso\""
+    ],
+    "ptPortugalGeo": [
+      "Portugal"
+    ],
     "ptEuropeCountryOr": [
       "Europa",
       "Europe",

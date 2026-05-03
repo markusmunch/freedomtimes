@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "etHarmSignals": [
+      "sunnevaldne kontroll",
+      "ajupesu",
+      "vaimne väärkohtlemine",
+      "usuline väärkohtlemine"
+    ],
     "etEuropeCountryOr": [
       "Euroopa",
       "Europe",

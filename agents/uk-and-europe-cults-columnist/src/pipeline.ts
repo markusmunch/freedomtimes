@@ -591,6 +591,13 @@ function detectTitle(html: string, fallback: string): string {
   return titleMatch?.[1]?.trim() || fallback;
 }
 
+function previewPlainText(text: string, maxLen: number): string {
+  return text
+    .slice(0, maxLen)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function createDraft(title: string, text: string, sourceLine: string, region: 'UK' | 'Europe', confidence: number, source: PipelineResult['source']): DraftPayload {
   const trimmed = text.slice(0, 1400);
 
@@ -689,6 +696,8 @@ export async function runPipeline(
     !source.reliabilityReasons.includes('No publication date detected');
 
   if (source.reliabilityScore < 70 && !missingAllowlistOnly) {
+    const title = detectTitle(html, 'Untitled source story');
+    const textPreview = previewPlainText(stripHtml(html), 420);
     return {
       status: 'rejected',
       source,
@@ -699,6 +708,8 @@ export async function runPipeline(
         reasons: ['Source reliability below threshold'],
       },
       reason: 'Source failed reliability checks',
+      title,
+      textPreview,
     };
   }
 
@@ -708,12 +719,16 @@ export async function runPipeline(
   const relevance = evaluateRelevance(`${title} ${text}`);
   const leadRegionSignal = hasConfiguredRegionalSignalInText(`${title} ${text.slice(0, 2800)}`);
 
+  const textPreview = previewPlainText(text, 420);
+
   if (!isCultTopicPrecise(title, text, effectiveUrl, language)) {
     return {
       status: 'rejected',
       source,
       relevance,
       reason: 'Story failed strict cult-topic precision checks',
+      title,
+      textPreview,
     };
   }
 
@@ -723,6 +738,8 @@ export async function runPipeline(
       source,
       relevance,
       reason: 'Story does not meet UK/EU cult-topic relevance threshold',
+      title,
+      textPreview,
     };
   }
 
@@ -732,6 +749,8 @@ export async function runPipeline(
       source,
       relevance,
       reason: 'Story does not have a configured regional source or configured regional geographic signal',
+      title,
+      textPreview,
     };
   }
 

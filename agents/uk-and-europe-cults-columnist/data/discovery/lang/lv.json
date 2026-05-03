@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "lvHarmSignals": [
+      "piespiedu kontrole",
+      "smadzeņu skalošana",
+      "garīga vardarbība",
+      "garīga izmantošana"
+    ],
     "lvEuropeCountryOr": [
       "Eiropa",
       "Europe",

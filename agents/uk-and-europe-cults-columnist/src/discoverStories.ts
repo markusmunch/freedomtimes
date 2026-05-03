@@ -4,8 +4,8 @@ import { ALL_CULT_TERMS, getCultTermsForLanguage } from './cultTerms.js';
 import { fetchJsonWithCache, fetchTextWithCache } from './httpCache.js';
 import {
   FOCUS_SIGNAL_TERMS,
-  GOOGLE_NEWS_COUNTRY_TERMS,
   GOOGLE_NEWS_GENERIC_QUERIES,
+  GOOGLE_NEWS_GENERIC_QUERY_SPECS,
   GOOGLE_NEWS_QUERY_GROUPS,
   GOOGLE_NEWS_WATCHLIST_SITES,
   NEWSDATA_COUNTRY_CODES,
@@ -533,13 +533,28 @@ function buildWatchlistQuerySuffixForSite(site: string): { kind: 'bundle'; suffi
   return { kind: 'legacy' };
 }
 
+function buildEnglishWatchlistFallbackSuffix(): string | null {
+  const groups = GOOGLE_NEWS_QUERY_GROUPS as Record<string, string[] | undefined>;
+  const bundles = loadWatchlistQueryBundles();
+  const enBundle = bundles['en'];
+  if (!enBundle) {
+    return null;
+  }
+  const cult = groups[enBundle.cultGroup];
+  const countries = resolveWatchlistCountryTerms(enBundle.countryGroup, groups);
+  if (!cult?.length || !countries?.length) {
+    return null;
+  }
+  return `${formatWatchlistOrGroup(cult)} ${formatWatchlistOrGroup(countries)}`;
+}
+
 /**
  * One Google News `q=` per bundle (cult + country OR-groups), with publishers OR-merged and chunked for URL size.
- * Legacy `site:… cult "<country>"` rows are merged per country the same way.
+ * Unmapped sites share one English `en` bundle-shaped suffix (no per-country `cult "…"` grid).
  */
 function buildWatchlistQueries(): string[] {
   const bundleSuffixToSites = new Map<string, string[]>();
-  const legacyCountryToSites = new Map<string, string[]>();
+  const fallbackSuffix = buildEnglishWatchlistFallbackSuffix();
 
   for (const site of GOOGLE_NEWS_WATCHLIST_SITES) {
     const resolved = buildWatchlistQuerySuffixForSite(site);
@@ -550,10 +565,10 @@ function buildWatchlistQueries(): string[] {
       continue;
     }
 
-    for (const country of GOOGLE_NEWS_COUNTRY_TERMS) {
-      const list = legacyCountryToSites.get(country) ?? [];
+    if (fallbackSuffix) {
+      const list = bundleSuffixToSites.get(fallbackSuffix) ?? [];
       list.push(site);
-      legacyCountryToSites.set(country, list);
+      bundleSuffixToSites.set(fallbackSuffix, list);
     }
   }
 
@@ -563,12 +578,6 @@ function buildWatchlistQueries(): string[] {
   for (const [suffix, sites] of bundleSuffixToSites) {
     for (const siteChunk of chunkArray(sites, chunk)) {
       queries.push(`${formatSiteOrClause(siteChunk)} ${suffix}`);
-    }
-  }
-
-  for (const [country, sites] of legacyCountryToSites) {
-    for (const siteChunk of chunkArray(sites, chunk)) {
-      queries.push(`${formatSiteOrClause(siteChunk)} cult "${country}"`);
     }
   }
 
@@ -622,6 +631,26 @@ function loadClusterStopwordsByLang(): Map<string, Set<string>> {
 
     if (!map.has('en')) {
       map.set('en', new Set(baseSet));
+    }
+
+    try {
+      const groupUrl = new URL('../data/group-stopwords-by-language.json', import.meta.url);
+      const groupRaw = readFileSync(groupUrl, 'utf-8');
+      const groupParsed = JSON.parse(groupRaw) as Record<string, unknown>;
+      for (const [lang, val] of Object.entries(groupParsed)) {
+        if (lang.startsWith('_') || !Array.isArray(val)) {
+          continue;
+        }
+        const code = lang.toLowerCase();
+        const set = map.get(code) ?? new Set(baseSet);
+        for (const t of val) {
+          set.add(String(t).toLowerCase());
+        }
+        map.set(code, set);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[agent] failed to merge group-stopwords-by-language.json', { message });
     }
 
     clusterStopwordsByLangCache = map;
@@ -1937,8 +1966,15 @@ function recordGoogleNewsQueryPlanFromConfig(params: {
       ...buildGoogleNewsQueryPlanRow(query, 'watchlist', allLocales),
       inMainPassThisRun: true,
     })),
-    ...GOOGLE_NEWS_GENERIC_QUERIES.map((query) => ({
-      ...buildGoogleNewsQueryPlanRow(query, 'generic', allLocales),
+    ...GOOGLE_NEWS_GENERIC_QUERY_SPECS.map((spec) => ({
+      ...buildGoogleNewsQueryPlanRow(
+        spec.query,
+        'generic',
+        allLocales,
+        spec.googleNewsLocaleIds && spec.googleNewsLocaleIds.length > 0
+          ? { pinnedGoogleNewsLocaleIds: spec.googleNewsLocaleIds }
+          : undefined,
+      ),
       inMainPassThisRun: true,
     })),
   ];
@@ -2002,10 +2038,13 @@ function recordGoogleNewsQueryPlanFromConfig(params: {
     },
     summary: {
       configWatchlistQueryStrings: params.watchlistQueriesFull.length,
-      configGenericQueryStrings: GOOGLE_NEWS_GENERIC_QUERIES.length,
+      configGenericQueryStrings: GOOGLE_NEWS_GENERIC_QUERY_SPECS.length,
       mainPassQueryStrings: params.mainPassSpecs.length,
       rssCellsFullConfigPool: countGoogleNewsRssCells(
-        [...params.watchlistQueriesFull, ...GOOGLE_NEWS_GENERIC_QUERIES],
+        [
+          ...params.watchlistQueriesFull.map((q) => ({ query: q })),
+          ...GOOGLE_NEWS_GENERIC_QUERY_SPECS,
+        ],
         allLocales,
       ),
       rssCellsMainPassThisRun: countGoogleNewsRssCells(params.mainPassSpecs, allLocales),
@@ -2039,7 +2078,7 @@ export async function discoverFromGoogleNews(options?: {
   const runSeed = Number.parseInt(new Date().toISOString().slice(0, 10).replace(/-/g, ''), 10);
   const mainPassSpecs: GoogleNewsQueryRunSpec[] = [
     ...watchlistQueries.map((query) => ({ query })),
-    ...GOOGLE_NEWS_GENERIC_QUERIES.map((query) => ({ query })),
+    ...GOOGLE_NEWS_GENERIC_QUERY_SPECS.map((spec) => ({ ...spec })),
   ];
   recordGoogleNewsQueryPlanFromConfig({
     runSeed,
@@ -2062,7 +2101,7 @@ export function reportGoogleNewsMainPassRssFootprint(isoDateSeed?: string): Reco
   const watchlistQueries = buildWatchlistQueries();
   const passSpecs: GoogleNewsQueryRunSpec[] = [
     ...watchlistQueries.map((query) => ({ query })),
-    ...GOOGLE_NEWS_GENERIC_QUERIES.map((query) => ({ query })),
+    ...GOOGLE_NEWS_GENERIC_QUERY_SPECS.map((spec) => ({ ...spec })),
   ];
   const rssCellsThisPass = countGoogleNewsRssCells(passSpecs, locales);
 
@@ -2077,45 +2116,26 @@ export function reportGoogleNewsMainPassRssFootprint(isoDateSeed?: string): Reco
     }
   }
 
-  const legacyEnglishWatchlist: string[] = [];
-  for (const site of GOOGLE_NEWS_WATCHLIST_SITES) {
-    for (const country of GOOGLE_NEWS_COUNTRY_TERMS) {
-      legacyEnglishWatchlist.push(`site:${site} cult "${country}"`);
-    }
-  }
-  const legacyPassQueries = [...legacyEnglishWatchlist, ...GOOGLE_NEWS_GENERIC_QUERIES];
-  const rssCellsLegacyWatchlistPublisherLocales = countGoogleNewsRssCells(legacyPassQueries, locales);
-  const rssCellsLegacyWatchlistAllLocalesEveryQuery = legacyPassQueries.length * localeCount;
-
-  const allNewPlusGeneric = [...watchlistQueries, ...GOOGLE_NEWS_GENERIC_QUERIES];
-  const allLegacyPlusGeneric = [...legacyEnglishWatchlist, ...GOOGLE_NEWS_GENERIC_QUERIES];
-  const rssCellsFullPoolNew = countGoogleNewsRssCells(allNewPlusGeneric, locales);
-  const rssCellsFullPoolLegacyPublisherLocales = countGoogleNewsRssCells(allLegacyPlusGeneric, locales);
-  const rssCellsFullPoolLegacyFullGrid = allLegacyPlusGeneric.length * localeCount;
+  const fullPoolSpecs: GoogleNewsQueryRunSpec[] = [
+    ...watchlistQueries.map((q) => ({ query: q })),
+    ...GOOGLE_NEWS_GENERIC_QUERY_SPECS.map((spec) => ({ ...spec })),
+  ];
+  const rssCellsFullPoolNew = countGoogleNewsRssCells(fullPoolSpecs, locales);
 
   return {
     localeCount,
     runSeed,
     watchlistSiteOrChunk: GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK,
     googleNewsTotalCap: GOOGLE_NEWS_TOTAL_CAP,
-    genericTemplateQueries: GOOGLE_NEWS_GENERIC_QUERIES.length,
+    genericTemplateSpecs: GOOGLE_NEWS_GENERIC_QUERY_SPECS.length,
+    genericTemplateQueryStringsUnique: GOOGLE_NEWS_GENERIC_QUERIES.length,
     watchlistSites: GOOGLE_NEWS_WATCHLIST_SITES.length,
     watchlistQueryStringsTotal: watchlistQueries.length,
     watchlistLocaleSiteCounts,
     watchlistEnAggregateSites,
     queriesInMainPass: passSpecs.length,
     rssGetCellsMainPass: rssCellsThisPass,
-    /** Unbounded legacy English `cult "<country>"` grid × per-publisher locales (for comparison only). */
-    rssGetCellsLegacyEnglishWatchlistPublisherLocales: rssCellsLegacyWatchlistPublisherLocales,
-    /** Legacy grid + generics × every locale every time. */
-    rssGetCellsLegacyFullEuropeGrid: rssCellsLegacyWatchlistAllLocalesEveryQuery,
-    legacyEnglishWatchlistStringsTotal: legacyEnglishWatchlist.length,
-    /** Merged watchlist + generics, publisher-scoped locales. */
-    rssGetCellsFullPoolNewWatchlist: rssCellsFullPoolNew,
-    /** Entire legacy English grid + generics, publisher locales. */
-    rssGetCellsFullPoolLegacyWatchlistPublisherLocales: rssCellsFullPoolLegacyPublisherLocales,
-    /** Entire legacy grid + generics × all locales every time. */
-    rssGetCellsFullPoolLegacyFullEuropeGrid: rssCellsFullPoolLegacyFullGrid,
+    rssGetCellsFullPoolWatchlistAndGenerics: rssCellsFullPoolNew,
   };
 }
 

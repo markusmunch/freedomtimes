@@ -18,7 +18,6 @@ const CORE_KEYS = [
   'ukGeo',
   'ukGeoTight',
   'europeGeo',
-  'harmSignals',
   'nordicsGeo',
   'czGeo',
   'balkansGeo',
@@ -32,7 +31,7 @@ const CORE_KEYS = [
 
 /** Primary language code → group keys owned by that file (cult + country OR lists). */
 const LANG_GROUP_KEYS = {
-  en: ['enWatchlistTerms', 'enEuropeCountryOr'],
+  en: ['enHarmSignals', 'enWatchlistTerms', 'enEuropeCountryOr'],
   de: ['deAtChTerms', 'deEuropeCountryOr'],
   fr: ['frBeTerms', 'frEuropeCountryOr'],
   it: ['itTerms', 'itEuropeCountryOr'],

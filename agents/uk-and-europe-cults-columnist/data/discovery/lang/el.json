@@ -6,8 +6,16 @@
       "secta",
       "sect",
       "cult",
-      "cults",
-      "\"coercive control\""
+      "cults"
+    ],
+    "elHarmSignals": [
+      "εξαναγκαστικός έλεγχος",
+      "πλύση εγκεφάλου",
+      "θρησκευτική κακοποίηση",
+      "πνευματική κακοποίηση"
+    ],
+    "elGreeceGeo": [
+      "Ελλάδα"
     ],
     "elEuropeCountryOr": [
       "Ευρώπη",

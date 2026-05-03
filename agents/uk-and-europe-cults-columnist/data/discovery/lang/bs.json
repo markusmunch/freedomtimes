@@ -9,6 +9,12 @@
       "cult",
       "cults"
     ],
+    "bsHarmSignals": [
+      "prisilna kontrola",
+      "pranje mozga",
+      "duhovno zlostavljanje",
+      "religijsko zlostavljanje"
+    ],
     "bsEuropeCountryOr": [
       "Evropa",
       "Europe",
