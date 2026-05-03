@@ -50,3 +50,7 @@ web/.generated/archive-import/*
 secrets/*
 agents/uk-and-europe-cults-columnist/reports/*.html
 agents/cult-columnist-cf-worker/.wrangler/*
+.release/rollback-branches/*
+agents/uk-and-europe-cults-columnist/reports/*
+agents/uk-and-europe-cults-columnist/tmp/*
+tmp/*
