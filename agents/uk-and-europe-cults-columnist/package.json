@@ -17,6 +17,7 @@
     "recover:failed-urls": "tsx scripts/recover-failed-urls.ts",
     "probe:publisher-langs": "tsx scripts/probe-publisher-homepage-langs.ts",
     "split:discovery-groups": "node scripts/split-discovery-query-groups.mjs",
+    "analyze:google-news-query-plan": "node scripts/analyze-google-news-query-plan.mjs",
     "e2e:smoke": "cmd /c scripts\\run-e2e-smoke.cmd 5",
     "e2e:full": "cmd /c \"cd /d %CD% && set AGENT_ENV=staging && set DISCOVERY_MAX_AGE_HOURS=168 && set DRY_RUN=true && npx tsx src/index.ts\""
   },

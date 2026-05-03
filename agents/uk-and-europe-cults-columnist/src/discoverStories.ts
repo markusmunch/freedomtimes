@@ -140,9 +140,6 @@ const GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK = readPositiveIntCapOrUnlimited(
   process.env.GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK,
 );
 
-const DISCOVERY_LOG_GOOGLE_NEWS_WRAPPED_LINKS =
-  (process.env.DISCOVERY_LOG_GOOGLE_NEWS_WRAPPED_LINKS ?? 'true').toLowerCase() !== 'false';
-
 const GOOGLE_NEWS_RESOLVE_USE_PLAYWRIGHT =
   (process.env.GOOGLE_NEWS_RESOLVE_USE_PLAYWRIGHT ?? 'false').toLowerCase() === 'true';
 /** Max Playwright navigations per discovery run (`0` = unlimited when Playwright resolve is on). */
@@ -202,6 +199,8 @@ export function flushGoogleNewsWrappedLinksReport(): void {
     playwrightSuccessesThisRun: payload.playwrightSuccessesThisRun,
   });
   googleNewsWrappedLinkBuffer.length = 0;
+  googleNewsPlaywrightAttemptsThisRun = 0;
+  googleNewsPlaywrightSuccessesThisRun = 0;
 }
 
 /** Pacing between Google News RSS cells to reduce 429/503 bursts (0 = off). */
@@ -2028,7 +2027,14 @@ function recordGoogleNewsQueryPlanFromConfig(params: {
 }
 
 /** Google News RSS discovery only (watchlist + generic queries), for tooling / smoke tests. */
-export async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
+export async function discoverFromGoogleNews(options?: {
+  /** When false, caller owns `flushGoogleNewsWrappedLinksReport()` (e.g. full `discoverCandidateStories`). Default true. */
+  flushWrappedLinksReport?: boolean;
+}): Promise<DiscoveredStory[]> {
+  const flushWrapped = options?.flushWrappedLinksReport !== false;
+  if (flushWrapped) {
+    resetGoogleNewsDiscoveryReporting();
+  }
   const watchlistQueries = buildWatchlistQueries();
   const runSeed = Number.parseInt(new Date().toISOString().slice(0, 10).replace(/-/g, ''), 10);
   const mainPassSpecs: GoogleNewsQueryRunSpec[] = [
@@ -2040,7 +2046,11 @@ export async function discoverFromGoogleNews(): Promise<DiscoveredStory[]> {
     watchlistQueriesFull: watchlistQueries,
     mainPassSpecs,
   });
-  return discoverFromGoogleNewsQueries(mainPassSpecs, 'google-news');
+  const stories = await discoverFromGoogleNewsQueries(mainPassSpecs, 'google-news');
+  if (flushWrapped) {
+    flushGoogleNewsWrappedLinksReport();
+  }
+  return stories;
 }
 
 /** Diagnostics: planned RSS GET counts for the main Google News pass (no network). */
@@ -2450,6 +2460,9 @@ async function discoverFromGoogleNewsQueries(
           rssRequests: totalRequests,
           rssRequestsPct,
           elapsedMs: Date.now() - gridStartedAt,
+          wrappedLinksBuffered: googleNewsWrappedLinkBuffer.length,
+          playwrightAttemptsThisRun: googleNewsPlaywrightAttemptsThisRun,
+          playwrightSuccessesThisRun: googleNewsPlaywrightSuccessesThisRun,
         });
         return discovered;
       }
@@ -2893,8 +2906,10 @@ function isAllowedOrSubdomain(hostname: string, allowedHosts: Set<string>): bool
 }
 
 export async function discoverCandidateStories(allowedHosts: Set<string>): Promise<DiscoveredStory[]> {
+  resetGoogleNewsDiscoveryReporting();
   const discovered: DiscoveredStory[] = [];
 
+  try {
   logDiscoveryProgress('start', {
     enabledFeedCount: FEEDS.filter((feed) => feed.enabled).length,
     googleNewsEnabled: DISCOVERY_GOOGLE_NEWS_ENABLED,
@@ -2912,7 +2927,7 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
 
   if (DISCOVERY_GOOGLE_NEWS_ENABLED) {
     try {
-      discovered.push(...(await discoverFromGoogleNews()));
+      discovered.push(...(await discoverFromGoogleNews({ flushWrappedLinksReport: false })));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn('[agent] google-news discovery failed', { message });
@@ -3065,4 +3080,7 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
   });
 
   return scored;
+  } finally {
+    flushGoogleNewsWrappedLinksReport();
+  }
 }
