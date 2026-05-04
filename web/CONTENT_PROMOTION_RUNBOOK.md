@@ -23,6 +23,28 @@ This runbook documents the repeatable process for getting verified staging conte
 4. A Turso rollback branch has been created for production before any migration or production content promotion.
 5. The promotion path being used is scripted and UTF-8-safe. Do not use manual copy/paste or ad hoc terminal redirection for content payloads.
 
+## Turso backups before any mutating work
+
+**Rule:** create a **recoverable backup** of the **specific Turso database** you are about to change **before** migrations, seeds, manual SQL, content promotion, or bulk CMS updates. Do not skip this for small or “obvious” edits.
+
+**Option A — file export (any Turso DB you can access with the CLI)**  
+After `turso auth login` (for example in WSL, see [Turso CLI introduction](https://docs.turso.tech/cli/introduction)):
+
+```bash
+turso db export freedomtimes-emdash-staging --output-file ./.release/backups/emdash-staging-$(date +%Y%m%d-%H%M%S).db
+```
+
+Use the real database name from `turso db list` (for example `freedomtimes-emdash-staging`, `freedomtimes-scheduler-staging`). Keep the file until the change is verified. Add `--overwrite` only when re-running the same command intentionally.
+
+**Option B — production rollback branch (EmDash production before risky work)**  
+Use `scripts/turso-create-rollback-branch.ps1` with `-AllowProduction` as already required in the prerequisites below; keep the emitted JSON under `.release/rollback-branches/`.
+
+Agents and operators should treat **scheduler** and **subscriptions** databases the same way whenever `web/scripts/apply-turso-sql.ts` or direct SQL is used against them.
+
+For **PR review** (EmDash version bumps, `content` / Portable Text refactors), use **`docs/PR_CHECKLIST_EMDASH_CONTENT.md`** — includes a **canary `content get`** to verify whether `data.content` is PT (`array`) or a legacy string.
+
+For **English copy** that cites French media or institutions (glosses on *France Inter*, *France Info*, hoisting stakes in the lede), use **`web/docs/EDITORIAL_ENGLISH_GLOSSES.md`** — including the **canonical Portable Text pattern** for a **French `blockquote` + English `<details>`** translation fold (same section).
+
 Set local env vars before running commands:
 
 ```powershell
@@ -126,6 +148,26 @@ Notes:
 
 - `archives` usually include media references; ensure required files exist in production media storage.
 - If create fails because slug exists, use `content get` on production and then `content update ... --rev <token>`.
+
+### Featured media and bylines (posts)
+
+Staging media IDs and R2 keys do **not** exist in production. Promoting only the `data` JSON without fixing `featured_image` leaves production pointing at missing media (broken hero images).
+
+Bylines are **not** set by copying `primaryBylineId` in a raw JSON file: the API expects a `bylines` array on create/update (see EmDash `contentUpdateBody`). Use `bylines: [{ "bylineId": "<id>" }]` in a follow-up `PUT` to `/_emdash/api/content/<collection>/<slug>`, or use the scripted promoter below.
+
+**Scripted path (recommended for `posts`):** from repo root, after `emdash login` for both URLs:
+
+```powershell
+node web/scripts/promote-post-staging-to-production.mjs posts <slug>
+```
+
+This script:
+
+1. Loads published staging **`data` via MCP `content_get` by default** (keeps **Portable Text** arrays in `data.content`); if MCP fails in **`PROMOTE_STAGING_SOURCE=auto`**, the script prints a **SEVERE WARNING** banner on **stderr** and falls back to **`emdash content get --published --json`** (risk: PT serialized as markdown in JSON). Set **`PROMOTE_STAGING_SOURCE=cli`** to use the CLI only (no MCP attempt; same serialization risk, no fallback banner). **`PROMOTE_STAGING_SOURCE=mcp`** fails closed if MCP errors.
+2. If `data.featured_image` references a media id that does not exist in production, downloads the file from the **public** staging URL `/_emdash/api/media/file/<storageKey>`, uploads it to production, and rewrites `featured_image` before `content create` / `content update`.
+3. If staging has `primaryBylineId`, sends `PUT` with `bylines: [{ bylineId }]`, then `publish`.
+
+Ensure the byline id already exists in production (for example list `GET /_emdash/api/admin/bylines` with a bearer token). If the guest author only exists on staging, create the matching byline in production first.
 
 Required content-integrity rule:
 

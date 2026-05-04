@@ -1,7 +1,8 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import Header from '../components/Header.astro';
-import PortableVideo from '../components/PortableVideo.astro';
+import Video from '../components/Video.astro';
+import Audio from '../components/Audio.astro';
 import PortableLink from '../components/PortableLink.astro';
 import PushNotificationsCallout from './PushNotificationsCallout.astro';
 import EntryHeader from './content/EntryHeader.astro';
@@ -53,7 +54,8 @@ const {
 } = buildContentEntryViewModel(entry as { slug?: string; data: Record<string, unknown> } & Record<string, unknown>);
 const portableComponents = {
 	type: {
-		video: PortableVideo,
+		video: Video,
+		audio: Audio,
 	},
 	mark: {
 		link: PortableLink,
@@ -135,6 +137,11 @@ const portableRenderNodes = buildPortableRenderNodes(portableContent);
 		margin: 0.9rem 0 0;
 	}
 
+	/* Translation fold-out: not a blockquote (no left bar); keep distinct from body copy. */
+	:global(.legacy-details.translate),
+	:global(.legacy-details.translation) {
+		border-left: none;
+	}
 
 	:global(.article-header h1) {
 		margin: 0;
@@ -340,6 +347,12 @@ const portableRenderNodes = buildPortableRenderNodes(portableContent);
 
 	:global(.pdf-link-wrap a:hover) {
 		text-decoration: underline;
+	}
+
+	/* One column measure for PT + legacy body: headings, embeds, and paragraphs share the same edge. */
+	.content-card :global(.portable-content),
+	.content-card :global(.legacy-content) {
+		max-width: 65ch;
 	}
 
 	.content-card :global(p) {
