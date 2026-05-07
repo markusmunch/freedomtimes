@@ -83,6 +83,7 @@ const socialTitle = publicationDateLabel ? `${title} - ${publicationDateLabel}` 
 	title={title}
 	socialTitle={socialTitle}
 	twitterTitle={socialImageSrc ? '_' : socialTitle}
+	twitterDescription={socialImageSrc ? '_' : description}
 	description={description}
 	canonicalUrl={canonicalPath}
 	ogType="article"
@@ -108,13 +109,6 @@ const socialTitle = publicationDateLabel ? `${title} - ${publicationDateLabel}` 
 		/>
 
 		<section class="content-card">
-			{summaryParagraphs.length > 0 && (
-				<div class="summary-wrap">
-					{summaryParagraphs.map((paragraph) => (
-						<p class="summary">{paragraph}</p>
-					))}
-				</div>
-			)}
 			<EntryMedia
 				title={title}
 				pageImages={pageImages}
@@ -238,21 +232,6 @@ const socialTitle = publicationDateLabel ? `${title} - ${publicationDateLabel}` 
 	.content-card {
 		line-height: 1.7;
 		font-size: 1.15rem;
-	}
-
-	.summary-wrap {
-		margin-bottom: 3rem;
-		padding-bottom: 2rem;
-		border-bottom: 1px solid #eeeeee;
-	}
-
-	.summary {
-		margin: 0 0 1.25rem;
-		font-size: 1.25rem;
-		font-weight: 500;
-		line-height: 1.5;
-		color: #222222;
-		max-width: 65ch;
 	}
 
 	:global(.hero) {

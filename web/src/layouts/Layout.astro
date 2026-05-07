@@ -6,6 +6,7 @@ interface Props {
 	hideFooter?: boolean;
 	title?: string;
 	description?: string;
+	twitterDescription?: string | null;
 	canonicalUrl?: string;
 	ogType?: 'website' | 'article';
 	ogImage?: string | null;
@@ -26,6 +27,7 @@ const {
 	hideFooter = false,
 	title,
 	description,
+	twitterDescription,
 	canonicalUrl,
 	ogType = 'website',
 	ogImage,
@@ -46,6 +48,9 @@ const resolvedTwitterTitle = twitterTitle === null
 	? null
 	: (twitterTitle !== undefined ? twitterTitle : resolvedSocialTitle);
 const resolvedDescription = description?.trim().length ? description.trim() : defaultDescription;
+const resolvedTwitterDescription = twitterDescription === null
+	? null
+	: (twitterDescription !== undefined ? twitterDescription : resolvedDescription);
 const resolvedCanonicalUrl = canonicalUrl?.trim().length ? canonicalUrl.trim() : Astro.url.href;
 const absoluteCanonical = new URL(resolvedCanonicalUrl, Astro.url).toString();
 const absoluteOgImage = ogImage?.trim().length ? new URL(ogImage.trim(), Astro.url).toString() : null;
@@ -86,7 +91,7 @@ const resolvedOgImageAlt = ogImageAlt?.trim().length ? ogImageAlt.trim() : `${si
 		{resolvedTwitterTitle !== null && resolvedTwitterTitle !== '' && (
 			<meta name="twitter:title" content={resolvedTwitterTitle} />
 		)}
-		<meta name="twitter:description" content={resolvedDescription} />
+		{resolvedTwitterDescription !== null && <meta name="twitter:description" content={resolvedTwitterDescription} />}
 		{absoluteOgImage && <meta name="twitter:image" content={absoluteOgImage} />}
 		{absoluteOgImage && <meta name="twitter:image:alt" content={resolvedOgImageAlt} />}
 		<link rel="preconnect" href="https://fonts.googleapis.com">
