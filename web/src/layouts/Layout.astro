@@ -1,11 +1,13 @@
 ---
 import Footer from '../components/Footer.astro';
+import { SITE_DISPLAY_NAME } from '../lib/site-brand';
 import '../styles/global.css';
 
 interface Props {
 	hideFooter?: boolean;
 	title?: string;
 	description?: string;
+	twitterDescription?: string | null;
 	canonicalUrl?: string;
 	ogType?: 'website' | 'article';
 	ogImage?: string | null;
@@ -20,12 +22,13 @@ interface Props {
 	noindex?: boolean;
 }
 
-const siteName = 'Freedom Times';
-const defaultDescription = 'Independent reporting, investigations, and analysis from Freedom Times.';
+const siteName = SITE_DISPLAY_NAME;
+const defaultDescription = `Independent reporting, investigations, and analysis from ${SITE_DISPLAY_NAME}.`;
 const {
 	hideFooter = false,
 	title,
 	description,
+	twitterDescription,
 	canonicalUrl,
 	ogType = 'website',
 	ogImage,
@@ -46,6 +49,9 @@ const resolvedTwitterTitle = twitterTitle === null
 	? null
 	: (twitterTitle !== undefined ? twitterTitle : resolvedSocialTitle);
 const resolvedDescription = description?.trim().length ? description.trim() : defaultDescription;
+const resolvedTwitterDescription = twitterDescription === null
+	? null
+	: (twitterDescription !== undefined ? twitterDescription : resolvedDescription);
 const resolvedCanonicalUrl = canonicalUrl?.trim().length ? canonicalUrl.trim() : Astro.url.href;
 const absoluteCanonical = new URL(resolvedCanonicalUrl, Astro.url).toString();
 const absoluteOgImage = ogImage?.trim().length ? new URL(ogImage.trim(), Astro.url).toString() : null;
@@ -63,7 +69,7 @@ const resolvedOgImageAlt = ogImageAlt?.trim().length ? ogImageAlt.trim() : `${si
 		<link rel="manifest" href="/manifest.webmanifest" />
 		<meta name="theme-color" content="#1d4b3e" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
-		<meta name="apple-mobile-web-app-title" content="Freedom Times" />
+		<meta name="apple-mobile-web-app-title" content={SITE_DISPLAY_NAME} />
 		<meta name="generator" content={Astro.generator} />
 		<meta name="description" content={resolvedDescription} />
 		<meta name="robots" content={noindex ? 'noindex,nofollow' : 'index,follow,max-image-preview:large'} />
@@ -86,7 +92,7 @@ const resolvedOgImageAlt = ogImageAlt?.trim().length ? ogImageAlt.trim() : `${si
 		{resolvedTwitterTitle !== null && resolvedTwitterTitle !== '' && (
 			<meta name="twitter:title" content={resolvedTwitterTitle} />
 		)}
-		<meta name="twitter:description" content={resolvedDescription} />
+		{resolvedTwitterDescription !== null && <meta name="twitter:description" content={resolvedTwitterDescription} />}
 		{absoluteOgImage && <meta name="twitter:image" content={absoluteOgImage} />}
 		{absoluteOgImage && <meta name="twitter:image:alt" content={resolvedOgImageAlt} />}
 		<link rel="preconnect" href="https://fonts.googleapis.com">
