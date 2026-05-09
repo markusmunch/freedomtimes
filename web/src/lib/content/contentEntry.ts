@@ -109,6 +109,10 @@ function readFeaturedImageSrc(value: unknown): string | null {
 		if (trimmed.length === 0) {
 			return null;
 		}
+		const parsed = tryParseJsonString(trimmed);
+		if (parsed && typeof parsed === 'object' && parsed !== null) {
+			return readFeaturedImageSrc(parsed);
+		}
 		return normalizeToPublicMediaFilePath(trimmed);
 	}
 
@@ -118,7 +122,11 @@ function readFeaturedImageSrc(value: unknown): string | null {
 			candidate.meta && typeof candidate.meta === 'object'
 				? (candidate.meta as Record<string, unknown>)
 				: null;
-		const storageKey = readString(meta?.storageKey) ?? readString(candidate.storageKey);
+		const storageKey =
+			readString(meta?.storageKey)
+			?? readString(meta?.storage_key)
+			?? readString(candidate.storageKey)
+			?? readString(candidate.storage_key);
 		if (storageKey) {
 			return `/_emdash/api/media/file/${storageKey}`;
 		}
@@ -173,7 +181,11 @@ function readMediaFileUrl(value: unknown): string | null {
 			candidate.meta && typeof candidate.meta === 'object'
 				? (candidate.meta as Record<string, unknown>)
 				: null;
-		const storageKey = readString(meta?.storageKey) ?? readString(candidate.storageKey);
+		const storageKey =
+			readString(meta?.storageKey)
+			?? readString(meta?.storage_key)
+			?? readString(candidate.storageKey)
+			?? readString(candidate.storage_key);
 		if (storageKey) {
 			return `/_emdash/api/media/file/${storageKey}`;
 		}
@@ -378,6 +390,10 @@ function extractImageFieldMediaIdForLookup(raw: unknown): string | null {
 	if (typeof raw === 'string') {
 		const t = raw.trim();
 		if (!t) return null;
+		const parsed = tryParseJsonString(t);
+		if (parsed && typeof parsed === 'object' && parsed !== null) {
+			return extractImageFieldMediaIdForLookup(parsed);
+		}
 		if (normalizeToPublicMediaFilePath(t)) return null;
 		if (/^[0-9A-HJKMNP-TV-Z]{20,36}$/i.test(t)) return t;
 		return null;
@@ -385,7 +401,12 @@ function extractImageFieldMediaIdForLookup(raw: unknown): string | null {
 	if (raw && typeof raw === 'object') {
 		const o = raw as Record<string, unknown>;
 		const meta = o.meta && typeof o.meta === 'object' ? (o.meta as Record<string, unknown>) : null;
-		if (readString(meta?.storageKey) ?? readString(o.storageKey)) {
+		if (
+			readString(meta?.storageKey)
+			?? readString(meta?.storage_key)
+			?? readString(o.storageKey)
+			?? readString(o.storage_key)
+		) {
 			return null;
 		}
 		const id = readString(o.id);
@@ -422,10 +443,38 @@ function workerSafeFetch():
 	};
 }
 
+export type ResolveSocialImageSrcOptions = {
+	/** Same-origin base URL (e.g. `Astro.url.origin`) for resolving bare media ids without Turso. */
+	origin?: string;
+};
+
+async function resolveStorageKeyFromMediaApi(origin: string, mediaId: string): Promise<string | null> {
+	const base = origin.replace(/\/$/, '');
+	try {
+		const r = await fetch(`${base}/_emdash/api/media/${encodeURIComponent(mediaId)}`, {
+			headers: { Accept: 'application/json' },
+		});
+		if (!r.ok) return null;
+		const j = (await r.json()) as {
+			data?: { item?: { storageKey?: string } };
+			item?: { storageKey?: string };
+		};
+		const item = j.data?.item ?? j.item;
+		const sk = item && typeof item.storageKey === 'string' ? item.storageKey.trim() : '';
+		return sk.length > 0 ? sk : null;
+	} catch {
+		return null;
+	}
+}
+
 export async function resolveSocialImageSrc(
 	data: Record<string, unknown>,
 	seo?: Record<string, unknown> | null,
+	options?: ResolveSocialImageSrcOptions,
 ): Promise<string | null> {
+	const heroFallback =
+		readFeaturedImageSrc(data.featured_image) ?? readFeaturedImageSrc(data.cover_image) ?? null;
+
 	const seoImage = seo ? readFeaturedImageSrc(seo.image) : null;
 	if (seoImage) return seoImage;
 
@@ -437,31 +486,46 @@ export async function resolveSocialImageSrc(
 		extractImageFieldMediaIdForLookup(seo?.image)
 		?? extractImageFieldMediaIdForLookup(data.social_image)
 		?? extractImageFieldMediaIdForLookup(data.socialImage);
-	if (!mediaId) return null;
+	if (!mediaId) {
+		return heroFallback;
+	}
 
 	const url = readOptionalEnv('TURSO_DATABASE_URL').trim();
 	const authToken = readOptionalEnv('TURSO_AUTH_TOKEN').trim();
-	if (!url || !authToken) return null;
-
-	try {
-		const client = createClient({
-			url,
-			authToken,
-			fetch: workerSafeFetch(),
-		});
-		const res = await client.execute({
-			sql: 'select storage_key from media where id = ? limit 1',
-			args: [mediaId],
-		});
-		const row = res.rows[0] as Record<string, unknown> | undefined;
-		const key = row && typeof row.storage_key === 'string' ? row.storage_key.trim() : '';
-		if (key.length > 0) {
-			return `/_emdash/api/media/file/${key}`;
+	if (url && authToken) {
+		try {
+			const client = createClient({
+				url,
+				authToken,
+				fetch: workerSafeFetch(),
+			});
+			const res = await client.execute({
+				sql: 'select storage_key from media where id = ? limit 1',
+				args: [mediaId],
+			});
+			const row = res.rows[0] as Record<string, unknown> | undefined;
+			const key = row && typeof row.storage_key === 'string' ? row.storage_key.trim() : '';
+			if (key.length > 0) {
+				return `/_emdash/api/media/file/${key}`;
+			}
+		} catch (err) {
+			console.error('[contentEntry] resolveSocialImageSrc Turso lookup failed', err);
 		}
-	} catch (err) {
-		console.error('[contentEntry] resolveSocialImageSrc failed', err);
 	}
-	return null;
+
+	const origin = options?.origin?.trim();
+	if (origin) {
+		const sk = await resolveStorageKeyFromMediaApi(origin, mediaId);
+		if (sk) return `/_emdash/api/media/file/${sk}`;
+	}
+
+	/**
+	 * `seo.image` is often a bare media row id. On Workers, Turso may be unset and
+	 * `GET /_emdash/api/media/:id` requires authentication, so lookup fails. Fall back to the hero
+	 * image (always stored with `meta.storageKey` in `data`) so `og:image` / `twitter:image` are never
+	 * empty when the post has a featured image.
+	 */
+	return heroFallback;
 }
 
 export function buildContentEntryViewModel(entry: { slug?: string; data: Record<string, unknown> } & Record<string, unknown>): ContentEntryViewModel {

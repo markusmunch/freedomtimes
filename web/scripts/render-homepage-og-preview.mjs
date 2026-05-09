@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import satori from 'satori';
 import { Resvg } from '@resvg/resvg-js';
 
+/** Keep in sync with `src/lib/site-brand.ts`. */
+const SITE_DISPLAY_NAME = 'freedom times';
+
 async function loadGoogleFont(family, weight) {
   const url = `https://fonts.googleapis.com/css2?family=${family.replace(/\s+/g, '+')}:wght@${weight}&display=swap`;
   const cssRes = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -57,7 +60,7 @@ const vdom = {
             letterSpacing: '-0.015em',
             marginBottom: '18px',
           },
-          children: 'Freedom Times',
+          children: SITE_DISPLAY_NAME,
         },
       },
       {
