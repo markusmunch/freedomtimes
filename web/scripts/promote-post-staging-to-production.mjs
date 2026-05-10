@@ -9,8 +9,11 @@
  *
  * Usage (from repo root):
  *   node web/scripts/promote-post-staging-to-production.mjs posts my-slug
+ *   node web/scripts/promote-post-staging-to-production.mjs pages about-us
  *
- * Requires ~/.config/emdash/auth.json with accessToken for both URLs.
+ * Token resolution (first match wins per environment):
+ * - Staging: **`EMDASH_STAGING_TOKEN`**, then **`~/.config/emdash/auth.json`** for the staging origin.
+ * - Production: **`EMDASH_PRODUCTION_TOKEN`**, then **`auth.json`** for the production origin.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -24,15 +27,31 @@ const STAGING_DEFAULT = "https://staging.freedomtimes.news";
 const PROD_DEFAULT = "https://freedomtimes.news";
 
 function loadAuth() {
-	const p = join(homedir(), ".config", "emdash", "auth.json");
-	const j = JSON.parse(readFileSync(p, "utf8"));
-	return j;
+	try {
+		const p = join(homedir(), ".config", "emdash", "auth.json");
+		return JSON.parse(readFileSync(p, "utf8"));
+	} catch {
+		return {};
+	}
 }
 
 function tokenFor(auth, baseUrl) {
-	const t = auth[baseUrl]?.accessToken;
-	if (!t) throw new Error(`No accessToken in auth.json for ${baseUrl}`);
+	const key = baseUrl.replace(/\/$/, "");
+	const t = auth[key]?.accessToken;
+	if (!t) throw new Error(`No accessToken in auth.json for ${key}`);
 	return t;
+}
+
+function resolveStagingToken(auth, stagingUrl) {
+	const envTok = process.env.EMDASH_STAGING_TOKEN?.trim();
+	if (envTok) return envTok;
+	return tokenFor(auth, stagingUrl);
+}
+
+function resolveProdToken(auth, prodUrl) {
+	const envTok = process.env.EMDASH_PRODUCTION_TOKEN?.trim();
+	if (envTok) return envTok;
+	return tokenFor(auth, prodUrl);
 }
 
 function apiUrl(base, path) {
@@ -166,8 +185,19 @@ async function main() {
 	const stagingUrl = process.env.EMDASH_STAGING_URL || STAGING_DEFAULT;
 	const prodUrl = process.env.EMDASH_PRODUCTION_URL || PROD_DEFAULT;
 	const auth = loadAuth();
-	const stagingToken = tokenFor(auth, stagingUrl);
-	const prodToken = tokenFor(auth, prodUrl);
+	const stagingToken = resolveStagingToken(auth, stagingUrl);
+	const prodToken = resolveProdToken(auth, prodUrl);
+
+	/** `posts` has SEO; `pages` does not (`hasSeo: false`) — MCP rejects `seo` on those collections. */
+	let collectionHasSeo = true;
+	try {
+		const schemaRow = await emdashMcpToolsCall(stagingUrl, stagingToken, "schema_get_collection", {
+			slug: collection,
+		});
+		collectionHasSeo = schemaRow?.hasSeo === true;
+	} catch {
+		/* prefer assuming SEO if schema fetch fails (older instances) */
+	}
 
 	const repoRoot = join(__dirname, "..", "..");
 	const webDir = join(repoRoot, "web");
@@ -234,23 +264,25 @@ async function main() {
 		}
 	}
 
-	// 2c) Remap seo.image (OG / share card): same as social_image
-	const ogi0 = payloadSeo.image;
-	if (ogi0 && typeof ogi0 === "object" && ogi0.id) {
-		const ok = await mediaExists(prodUrl, prodToken, ogi0.id);
-		if (!ok) {
-			const sk = ogi0.meta?.storageKey;
-			if (!sk) throw new Error("seo.image missing meta.storageKey; cannot download from staging");
-			const buf = await downloadStagingMediaFile(stagingUrl, sk);
-			const filename = ogi0.filename || "promoted-og.png";
-			const uploaded = await uploadMediaProd(prodUrl, prodToken, buf, filename, ogi0.alt ?? "");
-			payloadSeo.image = featuredFromUploadItem(uploaded, ogi0);
+	// 2c) Remap seo.image (OG / share card): same as social_image (SEO-enabled collections only)
+	if (collectionHasSeo) {
+		const ogi0 = payloadSeo.image;
+		if (ogi0 && typeof ogi0 === "object" && ogi0.id) {
+			const ok = await mediaExists(prodUrl, prodToken, ogi0.id);
+			if (!ok) {
+				const sk = ogi0.meta?.storageKey;
+				if (!sk) throw new Error("seo.image missing meta.storageKey; cannot download from staging");
+				const buf = await downloadStagingMediaFile(stagingUrl, sk);
+				const filename = ogi0.filename || "promoted-og.png";
+				const uploaded = await uploadMediaProd(prodUrl, prodToken, buf, filename, ogi0.alt ?? "");
+				payloadSeo.image = featuredFromUploadItem(uploaded, ogi0);
+			}
 		}
-	}
 
-	// 2d) Prefer seo.image; copy legacy social_image into seo.image when SEO image is empty
-	if ((payloadSeo.image === null || payloadSeo.image === undefined) && payloadData.social_image != null) {
-		payloadSeo.image = structuredClone(payloadData.social_image);
+		// 2d) Prefer seo.image; copy legacy social_image into seo.image when SEO image is empty
+		if ((payloadSeo.image === null || payloadSeo.image === undefined) && payloadData.social_image != null) {
+			payloadSeo.image = structuredClone(payloadData.social_image);
+		}
 	}
 
 	writeFileSync(dataPath, JSON.stringify(payloadData), "utf8");
@@ -264,22 +296,27 @@ async function main() {
 			data: payloadData,
 			status: "draft",
 		});
-		const revSeo = await prodContentRev(prodUrl, prodToken, collection, slug);
-		await emdashMcpToolsCall(prodUrl, prodToken, "content_update", {
-			collection,
-			id: slug,
-			seo: payloadSeo,
-			_rev: revSeo,
-		});
+		if (collectionHasSeo) {
+			const revSeo = await prodContentRev(prodUrl, prodToken, collection, slug);
+			await emdashMcpToolsCall(prodUrl, prodToken, "content_update", {
+				collection,
+				id: slug,
+				seo: payloadSeo,
+				_rev: revSeo,
+			});
+		}
 	} else {
 		const rev = await prodContentRev(prodUrl, prodToken, collection, slug);
-		await emdashMcpToolsCall(prodUrl, prodToken, "content_update", {
+		const updateArgs = {
 			collection,
 			id: slug,
 			data: payloadData,
-			seo: payloadSeo,
 			_rev: rev,
-		});
+		};
+		if (collectionHasSeo) {
+			updateArgs.seo = payloadSeo;
+		}
+		await emdashMcpToolsCall(prodUrl, prodToken, "content_update", updateArgs);
 	}
 
 	// 4) Bylines (MCP content_update)
