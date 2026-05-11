@@ -3,8 +3,6 @@ import { getEmDashCollection } from 'emdash';
 
 import Layout from '../layouts/Layout.astro';
 import Header from '../components/Header.astro';
-import NotificationPermission from '../components/NotificationPermission';
-import { getPushSubscribePublicKey } from '../lib/push-subscriptions';
 import { readOptionalEnv } from '../lib/auth';
 import { SITE_DISPLAY_NAME } from '../lib/site-brand';
 import {
@@ -23,11 +21,6 @@ type Story = {
   publishDate: string | null;
   updatedAt: string | null;
 };
-
-function isLikelyNativeShellRequest(request: Request): boolean {
-  const userAgent = request.headers.get('user-agent')?.toLowerCase() ?? '';
-  return userAgent.includes('freedomtimescapacitorapp');
-}
 
 function readImageSrc(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -212,10 +205,6 @@ const pushSubscribePublicKey = getPushSubscribePublicKey();
 >
   <div class="paper-wrap">
     <Header isEditor={isEditor} isSignedIn={isSignedIn} />
-
-    {showWebNotificationPanel && (
-      <NotificationPermission client:only="react" publicKey={pushSubscribePublicKey} />
-    )}
 
     <main class="front-grid">
       {lead ? (
