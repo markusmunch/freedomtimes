@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "astro dev",
+    "check": "astro check",
     "build": "tsx scripts/build-service-worker.ts && astro build && tsx scripts/patch-cloudflare-bundle.ts",
     "scheduler:db:migrate": "tsx scripts/apply-turso-sql.ts scheduler migrate",
     "scheduler:db:seed": "tsx scripts/apply-turso-sql.ts scheduler seed",
@@ -50,6 +51,7 @@
     "sharp": "^0.34.5"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.9",
     "@capacitor/cli": "^8.3.0",
     "@napi-rs/canvas": "^0.1.80",
     "@resvg/resvg-js": "^2.6.2",
@@ -58,6 +60,6 @@
     "pdfjs-dist": "^5.4.296",
     "satori": "^0.26.0",
     "tsx": "^4.20.6",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.3"
   }
 }
