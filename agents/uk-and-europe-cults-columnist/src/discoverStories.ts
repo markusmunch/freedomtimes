@@ -171,14 +171,14 @@ const GOOGLE_NEWS_TOTAL_CAP =
   Number.isFinite(GOOGLE_NEWS_TOTAL_CAP_RAW) && GOOGLE_NEWS_TOTAL_CAP_RAW > 0 ? GOOGLE_NEWS_TOTAL_CAP_RAW : 0;
 
 const GOOGLE_NEWS_GENERIC_QUERY_LIMIT = readPositiveIntCapOrUnlimited(
-  process.env.GOOGLE_NEWS_GENERIC_QUERY_LIMIT ?? '80',
+  process.env.GOOGLE_NEWS_GENERIC_QUERY_LIMIT ?? '',
 );
 
 /**
  * Max `site:` hosts per OR-merge before splitting (`0` / unset = one query with every host for that bundle).
  */
 const GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK = readPositiveIntCapOrUnlimited(
-  process.env.GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK ?? '6',
+  process.env.GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK ?? '1',
 );
 
 const GOOGLE_NEWS_RESOLVE_USE_PLAYWRIGHT =
@@ -352,11 +352,203 @@ const NEWSIO_CACHE_TTL_MINUTES = Math.max(
 );
 const NEWSDATA_CACHE_PATH = new URL('../.cache/newsdata-cache.json', import.meta.url);
 const DEFAULT_NEWSIO_MAX_CREDITS_PER_RUN = 6;
+
+const HEADLINEFEED_ENABLED = (process.env.HEADLINEFEED_ENABLED ?? 'false').toLowerCase() === 'true';
+const HEADLINEFEED_API_KEY = process.env.HEADLINEFEED_API_KEY;
+const HEADLINEFEED_BASE_URL = 'https://api.headlinefeed.dev/api/search';
+const HEADLINEFEED_CACHE_PATH = new URL('../.cache/headlinefeed-cache.json', import.meta.url);
+const DEFAULT_HEADLINEFEED_CACHE_TTL_MINUTES = 360;
+const HEADLINEFEED_CACHE_TTL_MINUTES = Math.max(
+  1,
+  Number.parseInt(
+    process.env.HEADLINEFEED_CACHE_TTL_MINUTES ?? `${DEFAULT_HEADLINEFEED_CACHE_TTL_MINUTES}`,
+    10,
+  ) || DEFAULT_HEADLINEFEED_CACHE_TTL_MINUTES,
+);
 const NEWSIO_MAX_CREDITS_PER_RUN = Math.max(
   1,
   Number.parseInt(process.env.NEWSIO_MAX_CREDITS_PER_RUN ?? `${DEFAULT_NEWSIO_MAX_CREDITS_PER_RUN}`, 10) ||
     DEFAULT_NEWSIO_MAX_CREDITS_PER_RUN,
 );
+
+type HeadlineFeedArticle = {
+  title?: string;
+  url?: string;
+  source?: string;
+  publishedAt?: string;
+  description?: string;
+};
+
+type HeadlineFeedCacheEntry = {
+  fetchedAt: string;
+  results: HeadlineFeedArticle[];
+};
+
+type HeadlineFeedCache = {
+  version: 1;
+  entries: Record<string, HeadlineFeedCacheEntry>;
+};
+
+function loadHeadlineFeedCache(): HeadlineFeedCache {
+  try {
+    const raw = readFileSync(HEADLINEFEED_CACHE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as { version?: number; entries?: Record<string, HeadlineFeedCacheEntry> };
+    if (parsed.version === 1 && parsed.entries && typeof parsed.entries === 'object') {
+      return { version: 1, entries: parsed.entries };
+    }
+  } catch {
+    // Missing or invalid cache — start fresh.
+  }
+  return { version: 1, entries: {} };
+}
+
+function saveHeadlineFeedCache(cache: HeadlineFeedCache): void {
+  try {
+    mkdirSync(new URL('../.cache/', import.meta.url), { recursive: true });
+    writeFileSync(HEADLINEFEED_CACHE_PATH, `${JSON.stringify(cache, null, 2)}\n`, 'utf-8');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[agent] failed to write headlinefeed cache', { message });
+  }
+}
+
+function isHeadlineFeedCacheEntryFresh(entry: HeadlineFeedCacheEntry): boolean {
+  const fetchedAtEpochMs = Date.parse(entry.fetchedAt);
+  if (!Number.isFinite(fetchedAtEpochMs)) {
+    return false;
+  }
+  const ageMs = Date.now() - fetchedAtEpochMs;
+  const ttlMs = HEADLINEFEED_CACHE_TTL_MINUTES * 60 * 1000;
+  return ageMs >= 0 && ageMs <= ttlMs;
+}
+
+function buildHeadlineFeedDateRange(): { startDate: string; endDate: string } {
+  const maxAgeMs = Math.min(DISCOVERY_MAX_AGE_HOURS, 168) * 60 * 60 * 1000;
+  const startDate = new Date(Date.now() - maxAgeMs).toISOString().slice(0, 10);
+  const endDate = new Date().toISOString().slice(0, 10);
+  return { startDate, endDate };
+}
+
+async function discoverFromHeadlineFeed(): Promise<DiscoveredStory[]> {
+  if (!HEADLINEFEED_ENABLED) {
+    return [];
+  }
+
+  if (!HEADLINEFEED_API_KEY) {
+    console.warn('[agent] HeadlineFeed enabled but HEADLINEFEED_API_KEY is missing');
+    return [];
+  }
+
+  const searchTerms = ['cult', 'cults', 'sect', 'sects', 'brainwashing', 'trafficking', 'slavery'];
+  const { startDate, endDate } = buildHeadlineFeedDateRange();
+  const discovered: DiscoveredStory[] = [];
+  const cache = loadHeadlineFeedCache();
+  let cacheUpdated = false;
+  let termIndex = 0;
+
+  logDiscoveryProgress('headlinefeed-start', { termCount: searchTerms.length, startDate, endDate });
+
+  for (const term of searchTerms) {
+    termIndex += 1;
+    const cacheKey = `${term}|${startDate}|${endDate}`;
+    const discoveredBefore = discovered.length;
+    let results: HeadlineFeedArticle[];
+
+    const cached = cache.entries[cacheKey];
+    if (cached && isHeadlineFeedCacheEntryFresh(cached)) {
+      console.log('[agent] headlinefeed cache hit', { term, resultCount: cached.results.length });
+      results = cached.results;
+    } else {
+      try {
+        const httpResponse = await fetch(HEADLINEFEED_BASE_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${HEADLINEFEED_API_KEY}`,
+            'Content-Type': 'application/json',
+            'User-Agent': 'FreedomTimes-Local-Agent/0.1',
+          },
+          body: JSON.stringify({ title: term, startDate, endDate }),
+        });
+
+        if (!httpResponse.ok) {
+          console.warn('[agent] headlinefeed fetch failed', { term, status: httpResponse.status });
+          logDiscoveryProgress('headlinefeed-running', {
+            termIndex,
+            termCount: searchTerms.length,
+            term,
+            discovered: discovered.length,
+            addedThisQuery: 0,
+            fetchOk: false,
+          });
+          continue;
+        }
+
+        const payload = await httpResponse.json() as { headlines?: HeadlineFeedArticle[] };
+        results = payload.headlines ?? [];
+        cache.entries[cacheKey] = { fetchedAt: new Date().toISOString(), results };
+        cacheUpdated = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn('[agent] headlinefeed fetch error', { term, message });
+        logDiscoveryProgress('headlinefeed-running', {
+          termIndex,
+          termCount: searchTerms.length,
+          term,
+          discovered: discovered.length,
+          addedThisQuery: 0,
+          fetchError: true,
+        });
+        continue;
+      }
+    }
+
+    for (const item of results) {
+      const url = normalizePossibleUrl(item.url);
+      const title = (item.title ?? '').trim();
+
+      if (!url || !title) {
+        continue;
+      }
+
+      if (!getHost(url)) {
+        continue;
+      }
+
+      const publishedAt = normalizePublishedAt(item.publishedAt);
+      if (!isWithinFreshnessWindow(publishedAt)) {
+        continue;
+      }
+
+      discovered.push({
+        url,
+        title,
+        publishedAt,
+        sourceFeed: `headlinefeed:${term}`,
+        sourceFormat: 'newsio',
+        sourceCategory: 'api',
+        requiresUrlResolution: false,
+        publisherName: item.source,
+      });
+    }
+
+    logDiscoveryProgress('headlinefeed-running', {
+      termIndex,
+      termCount: searchTerms.length,
+      term,
+      discovered: discovered.length,
+      addedThisQuery: discovered.length - discoveredBefore,
+      resultRows: results.length,
+      fetchOk: true,
+    });
+  }
+
+  if (cacheUpdated) {
+    saveHeadlineFeedCache(cache);
+  }
+
+  logDiscoveryProgress('headlinefeed-complete', { discovered: discovered.length });
+  return discovered;
+}
 
 function logDiscoveryProgress(stage: string, data: Record<string, unknown>): void {
   console.log(
@@ -3118,8 +3310,8 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
     enabledFeedCount: FEEDS.filter((feed) => feed.enabled).length,
     googleNewsEnabled: DISCOVERY_GOOGLE_NEWS_ENABLED,
     phases: DISCOVERY_GOOGLE_NEWS_ENABLED
-      ? ['newsdata', 'google-news', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion']
-      : ['newsdata', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion'],
+      ? ['newsdata', 'headlinefeed', 'google-news', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion']
+      : ['newsdata', 'headlinefeed', 'publisher-feeds', 'enrich-dates', 'freshness-filter', 'score', 'cluster-expansion'],
   });
 
   try {
@@ -3127,6 +3319,13 @@ export async function discoverCandidateStories(allowedHosts: Set<string>): Promi
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn('[agent] newsdata discovery failed', { message });
+  }
+
+  try {
+    discovered.push(...(await discoverFromHeadlineFeed()));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[agent] headlinefeed discovery failed', { message });
   }
 
   if (DISCOVERY_GOOGLE_NEWS_ENABLED) {

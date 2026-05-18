@@ -6,6 +6,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { detect as detectLanguage } from 'tinyld';
 import { loadGroupStopwordsByLanguageFromDiscoveryLangFiles } from '../src/discoveryLangGroupStopwords.js';
 import {
+  getReligiousGroupTermsForLanguage,
+  getCoerciveHarmTermsForLanguage,
+} from '../src/pipelineTerms.js';
+import { getCultTermsForLanguage } from '../src/cultTerms.js';
+import { hasFigurativeCultUsage } from '../src/pipeline.js';
+import {
   Fragment,
   DRAFTS_PATH,
   LOG_PATH,
@@ -292,108 +298,24 @@ function dedupeStories(stories: EnrichedStory[]): { kept: EnrichedStory[]; exclu
   return { kept, excluded };
 }
 
-const MANUAL_RENDER_EXCLUSIONS: Array<{ url: string; reason: string }> = [
-  { url: 'https://www.heraldscotland.com/news/26025413.alan-cummings-new-mission-reinventing-scottish-theatre/?ref=rss', reason: 'Figurative usage ("cult Scottish material"/"cult BBC Scotland sitcom"), not cult-reporting journalism.' },
-  { url: 'https://www.mirror.co.uk/news/uk-news/best-paperbacks-read-now-including-37030837', reason: 'Book-list lifestyle content; cult term used figuratively.' },
-  { url: 'https://www.cityam.com/the-cult-of-cute-the-strange-drama-of-corporate-mascots/', reason: 'Figurative phrase: cult of cute.' },
-  { url: 'https://www.vogue.com/article/casa-milana-beni-rugs-laguna-b-glassware', reason: 'Lifestyle/design piece; cult term used figuratively.' },
-  { url: 'https://www.videogameschronicle.com/news/stay-tuned-it-sounds-like-cult-n64-shooter-buck-bumble-is-really-coming-back/', reason: 'Gaming news with figurative cult-classic wording.' },
-  { url: 'https://www.loudersound.com/bands-artists/savoy-brown-band-history', reason: 'Music history feature with figurative cult usage.' },
-  { url: 'https://www.timeout.com/london/news/this-american-cult-taco-chain-is-opening-its-first-london-restaurant-042126', reason: 'Restaurant opening; cult term used figuratively.' },
-  { url: 'https://www.parkrun.org.uk/stratforduponavon/news/2026/04/18/435-dont-do-it-its-a-cult/', reason: 'Community/joke usage, not a cult-reporting story.' },
-  { url: 'https://www.krone.at/4113641', reason: 'German Kult-* figurative entertainment/sports context.' },
-  { url: 'https://www.nhregister.com/news/world/article/philippine-president-says-key-suspect-in-22210233.php', reason: 'General corruption/politics report; not cult-specific.' },
-  { url: 'https://www.wral.com/news/ap/d9d49-philippine-president-says-key-suspect-in-corruption-scandal-has-been-arrested-in-prague/', reason: 'General corruption/politics report; not cult-specific.' },
-  { url: 'https://www.hospitalityandcateringnews.com/2026/04/cult-supper-club-concept-all-roads-opens-permanent-site-in-brixton/', reason: 'Hospitality business story with figurative cult branding.' },
-];
-
-const MANUAL_RENDER_EXCLUSION_REASON_BY_URL = new Map(
-  MANUAL_RENDER_EXCLUSIONS.map((entry) => [normalizeUrl(entry.url), entry.reason]),
-);
-
-function getManualRenderExclusionReason(draft: DraftStory): string | undefined {
-  const byUrl = MANUAL_RENDER_EXCLUSION_REASON_BY_URL.get(normalizeUrl(draft.url));
-  if (byUrl) {
-    return byUrl;
-  }
-
-  const normalizedTitle = draft.title.toLowerCase();
-  const normalizedHost = (draft.host ?? getHostname(draft.url) ?? '').toLowerCase();
-  if (
-    normalizedHost.includes('heraldscotland.com') &&
-    normalizedTitle.includes("alan cumming’s new mission: reinventing scottish theatre")
-  ) {
-    return 'Figurative usage ("cult Scottish material"/"cult BBC Scotland sitcom"), not cult-reporting journalism.';
-  }
-
-  return undefined;
-}
-
-const FIGURATIVE_CULT_MARKERS = [
-  'cult classic',
-  'cult favourite',
-  'cult favorite',
-  'cult following',
-  'cult status',
-  'cult hit',
-  'cult bbc scotland sitcom',
-  'cult sitcom',
-  'cult film',
-  'cult movie',
-  'cult tv',
-  'cult show',
-  'cult game',
-  'cult shooter',
-  'cult band',
-  'cult album',
-  'cult brand',
-  'cult beauty',
-  'cult fashion',
-  'cult grocery',
-  'cult restaurant',
-  'cult taco',
-];
-
-const CULT_HARM_OR_RELIGIOUS_SIGNAL_TERMS = [
-  'sect',
-  'religious group',
-  'religious sect',
-  'church',
-  'jehovah',
-  'witness',
-  'slavery',
-  'modern slavery',
-  'human trafficking',
-  'forced marriage',
-  'coercive control',
-  'abuse',
-  'sexual abuse',
-  'rape',
-  'assault',
-  'arrest',
-  'raided',
-  'raid',
-  'charged',
-  'criminal',
-  'prosecut',
-  'court',
-  'tribunal',
-  'ruling',
-  'investigation',
-  'victim',
-];
-
-function getFigurativeCultExclusionReason(story: EnrichedStory): string | undefined {
+function getFigurativeCultExclusionReason(story: EnrichedStory, language: string): string | undefined {
   const haystack = `${story.title} ${story.description} ${story.articleText}`.toLowerCase();
-  if (!/\bcults?\b/u.test(haystack)) {
+  const cultTerms = getCultTermsForLanguage(language);
+  const hasCultTerm = cultTerms.some((term) => haystack.includes(term.toLowerCase()));
+  if (!hasCultTerm) {
     return undefined;
   }
 
-  if (CULT_HARM_OR_RELIGIOUS_SIGNAL_TERMS.some((term) => haystack.includes(term))) {
+  const religiousGroupTerms = getReligiousGroupTermsForLanguage(language);
+  const coerciveHarmTerms = getCoerciveHarmTermsForLanguage(language);
+  if (
+    religiousGroupTerms.some((term) => haystack.includes(term.toLowerCase())) ||
+    coerciveHarmTerms.some((term) => haystack.includes(term.toLowerCase()))
+  ) {
     return undefined;
   }
 
-  if (!FIGURATIVE_CULT_MARKERS.some((term) => haystack.includes(term))) {
+  if (!hasFigurativeCultUsage(haystack, language)) {
     return undefined;
   }
 
@@ -714,6 +636,27 @@ function addNgrams(termCounts: Map<string, number>, tokens: string[], n: number,
   }
 }
 
+/**
+ * Returns lowercased tokens that appear capitalised mid-sentence in the original text —
+ * a cheap proper-noun signal. The first word of a sentence is excluded (it's always
+ * capitalised) by requiring the preceding character to be a non-sentence-opening context
+ * (i.e. the token must not be the very first word and must follow a space, not a period).
+ */
+function extractProperNounTokens(original: string, tokens: string[], stopwords: Set<string>): Set<string> {
+  const result = new Set<string>();
+  for (const token of tokens) {
+    if (stopwords.has(token)) continue;
+    if (token.length < 3) continue;
+    const capitalized = token[0]!.toUpperCase() + token.slice(1);
+    // Match the token when preceded by a space (not sentence-start after . or start-of-string)
+    const pattern = new RegExp(`(?<=[^.!?\n])\\s+${capitalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[^a-z]|$)`, 'u');
+    if (pattern.test(original)) {
+      result.add(token);
+    }
+  }
+  return result;
+}
+
 function buildStoryFeatures(stories: EnrichedStory[]): StoryFeatures[] {
   return stories.map((story, index) => {
     const language = detectStoryLanguage(story);
@@ -722,11 +665,9 @@ function buildStoryFeatures(stories: EnrichedStory[]): StoryFeatures[] {
 
     const titleTokens = tokenize(story.title, stopwords);
     const descriptionTokens = tokenize(story.description ?? '', stopwords);
-    const slugTokens = tokenize(getSlug(story.url) ?? '', stopwords);
     const articleTokens = tokenize(story.articleText ?? '', stopwords).slice(0, 500);
 
     addTokens(termCounts, titleTokens, 3);
-    addTokens(termCounts, slugTokens, 2);
     addTokens(termCounts, descriptionTokens, 1);
     addTokens(termCounts, articleTokens, 0.4);
 
@@ -736,12 +677,24 @@ function buildStoryFeatures(stories: EnrichedStory[]): StoryFeatures[] {
     addNgrams(termCounts, descriptionTokens, 3, 0.9);
     addNgrams(termCounts, articleTokens, 2, 0.3);
 
+    const titleProperNouns = extractProperNounTokens(story.title, titleTokens, stopwords);
+    const descProperNouns = extractProperNounTokens(story.description ?? '', descriptionTokens, stopwords);
+    const articleProperNouns = extractProperNounTokens(story.articleText ?? '', articleTokens, stopwords);
+    const properNounBigrams = [
+      ...Array.from(titleProperNouns).flatMap((t, _, arr) => {
+        const idx = titleTokens.indexOf(t);
+        if (idx < titleTokens.length - 1 && titleProperNouns.has(titleTokens[idx + 1]!)) {
+          return [`${t} ${titleTokens[idx + 1]}`];
+        }
+        return [];
+      }),
+    ];
+
     const anchorTerms = new Set<string>([
-      ...titleTokens,
-      ...slugTokens,
-      ...descriptionTokens,
-      ...titleTokens.flatMap((_, i, list) => (i < list.length - 1 ? [list.slice(i, i + 2).join(' ')] : [])),
-      ...descriptionTokens.flatMap((_, i, list) => (i < list.length - 1 ? [list.slice(i, i + 2).join(' ')] : [])),
+      ...titleProperNouns,
+      ...descProperNouns,
+      ...articleProperNouns,
+      ...properNounBigrams,
     ]);
 
     return { index, language, anchorTerms, termCounts };
@@ -800,10 +753,10 @@ function countSharedRareAnchorTerms(a: StoryFeatures, b: StoryFeatures, idf: Map
     if (!b.anchorTerms.has(term)) {
       continue;
     }
-    if ((idf.get(term) ?? 0) < 1.45) {
+    if ((idf.get(term) ?? 0) < 1.8) {
       continue;
     }
-    if (term.length < 5) {
+    if (term.length < 4) {
       continue;
     }
     shared += 1;
@@ -814,8 +767,9 @@ function countSharedRareAnchorTerms(a: StoryFeatures, b: StoryFeatures, idf: Map
 
 function buildAdjacency(features: StoryFeatures[], idf: Map<string, number>): Map<number, Set<number>> {
   const edges = new Map<number, Set<number>>();
-  const strictThreshold = 0.24;
-  const relaxedThreshold = 0.10;
+  const strictThreshold = 0.42;
+  const relaxedThreshold = 0.18;
+  const anchorMinSimilarity = 0.10;
 
   for (let i = 0; i < features.length; i += 1) {
     for (let j = i + 1; j < features.length; j += 1) {
@@ -823,8 +777,8 @@ function buildAdjacency(features: StoryFeatures[], idf: Map<string, number>): Ma
       const sharedRareAnchorTerms = countSharedRareAnchorTerms(features[i], features[j], idf);
       const shouldLink =
         similarity >= strictThreshold ||
-        sharedRareAnchorTerms >= 2 ||
-        (similarity >= relaxedThreshold && sharedRareAnchorTerms >= 1);
+        (similarity >= relaxedThreshold && sharedRareAnchorTerms >= 1) ||
+        (similarity >= anchorMinSimilarity && sharedRareAnchorTerms >= 2);
 
       if (!shouldLink) {
         continue;
@@ -840,6 +794,23 @@ function buildAdjacency(features: StoryFeatures[], idf: Map<string, number>): Ma
   }
 
   return edges;
+}
+
+const MAX_CLUSTER_SIZE = 12;
+const MIN_CLUSTER_COHERENCE = 0.20;
+
+function isClusterCoherent(component: number[], features: StoryFeatures[], idf: Map<string, number>): boolean {
+  if (component.length <= 2) return true;
+  if (component.length > MAX_CLUSTER_SIZE) return false;
+  let totalSim = 0;
+  let pairs = 0;
+  for (let i = 0; i < component.length; i += 1) {
+    for (let j = i + 1; j < component.length; j += 1) {
+      totalSim += cosineSimilarity(features[component[i]!], features[component[j]!], idf);
+      pairs += 1;
+    }
+  }
+  return pairs === 0 || totalSim / pairs >= MIN_CLUSTER_COHERENCE;
 }
 
 function selectGroupLabel(features: StoryFeatures[], storyIndexes: number[], idf: Map<string, number>): string {
@@ -908,6 +879,10 @@ function detectStoryClusters(stories: EnrichedStory[]): DetectedGroup[] {
     }
 
     if (component.length < 2) {
+      continue;
+    }
+
+    if (!isClusterCoherent(component, features, idf)) {
       continue;
     }
 
@@ -984,15 +959,7 @@ async function main(): Promise<void> {
   });
 
   const excluded: Array<{ url: string; reason: string }> = [];
-  const eligibleDrafts = canonicalDrafts.filter((draft) => {
-    const reason = getManualRenderExclusionReason(draft);
-    if (!reason) {
-      return true;
-    }
-
-    excluded.push({ url: draft.url, reason });
-    return false;
-  });
+  const eligibleDrafts = canonicalDrafts;
 
   const nonCultnewsSlugs = new Set<string>(
     eligibleDrafts
@@ -1042,7 +1009,8 @@ async function main(): Promise<void> {
   });
 
   const figurativeFilteredStories = freshnessFilteredStories.filter((story) => {
-    const reason = getFigurativeCultExclusionReason(story);
+    const language = detectStoryLanguage(story);
+    const reason = getFigurativeCultExclusionReason(story, language);
     if (!reason) {
       return true;
     }

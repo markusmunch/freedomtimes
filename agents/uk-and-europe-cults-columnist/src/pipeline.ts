@@ -124,7 +124,7 @@ function countMatchingPhrases(text: string, terms: string[]): number {
   return matches;
 }
 
-function normalizeMatchingText(text: string): string {
+export function normalizeMatchingText(text: string): string {
   return text
     .replace(/&quot;|&#34;|&#x22;/gi, '"')
     .replace(/&#39;|&#x27;|&apos;/gi, "'")
@@ -149,7 +149,7 @@ function detectLanguageFromHtml(html: string): string | undefined {
   return detected || undefined;
 }
 
-function hasFigurativeCultUsage(text: string, language?: string): boolean {
+export function hasFigurativeCultUsage(text: string, language?: string): boolean {
   const normalized = normalizeMatchingText(text);
   if (FIGURATIVE_CULT_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return true;

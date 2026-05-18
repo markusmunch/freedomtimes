@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node --enable-source-maps dist/index.js",
-    "dev": "cmd /c \"set DISCOVERY_MAX_AGE_HOURS=168&& set GOOGLE_NEWS_GENERIC_QUERY_LIMIT=20&& set GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK=6&& .\\node_modules\\.bin\\tsx.cmd src/index.ts\"",
+    "dev": "cmd /c \"set DISCOVERY_MAX_AGE_HOURS=168&& set GOOGLE_NEWS_WATCHLIST_SITE_OR_CHUNK=1&& .\\node_modules\\.bin\\tsx.cmd --env-file=.env src/index.ts\"",
     "pipeline:only": "cmd /c \"set SKIP_DISCOVERY=true&& set DISCOVERY_MAX_AGE_HOURS=168&& .\\node_modules\\.bin\\tsx.cmd src/index.ts\"",
     "render:html": "cmd /c \"set CULT_NEWS_RENDER_MAX_AGE_HOURS=168&& tsx scripts/render-cult-news-html.tsx\"",
     "render:cult-news": "cmd /c \"set CULT_NEWS_RENDER_MAX_AGE_HOURS=168&& tsx scripts/render-cult-news-html.tsx\"",
@@ -22,6 +22,8 @@
     "replay:rejection-review-html": "tsx scripts/replay-rejection-review-from-log.ts",
     "export:candidates": "tsx scripts/export-candidate-urls.ts",
     "render:rejection-review-html": "node scripts/render-pipeline-rejection-review-html.mjs",
+    "snapshot:html": "cmd /c powershell -Command \"Copy-Item reports/cult-news-latest.html reports/cult-news-snapshot.html -Force; Write-Host 'Snapshot saved to reports/cult-news-snapshot.html'\"",
+    "diff:html": "node scripts/diff-cult-news-reports.mjs reports/cult-news-latest.html reports/cult-news-snapshot.html",
     "e2e:smoke": "cmd /c scripts\\run-e2e-smoke.cmd 5",
     "e2e:full": "cmd /c \"cd /d %CD% && set AGENT_ENV=staging && set DISCOVERY_MAX_AGE_HOURS=168 && set DRY_RUN=true && npx tsx src/index.ts\""
   },
