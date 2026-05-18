@@ -5,6 +5,7 @@ import { type DiscoveredStory, discoverCandidateStories } from './discoverStorie
 import { createDraftViaMcp } from './mcpClient.js';
 import { ARCHIVE_FALLBACK_HOSTS } from './http-cache/config.js';
 import { runPipeline } from './pipeline.js';
+import type { DraftPayload } from './types.js';
 
 function getArg(name: string): string | undefined {
   const prefix = `--${name}=`;
@@ -194,6 +195,7 @@ async function main(): Promise<void> {
     reliabilityReasons: string[];
     relevance: { accepted: boolean; region: string; confidence: number; reasons: string[] };
   }> = [];
+  const runDrafts: DraftPayload[] = [];
 
   const pipelineStartedAt = Date.now();
 
@@ -281,6 +283,7 @@ async function main(): Promise<void> {
             acceptedNotDrafted += 1;
           } else {
             drafted += 1;
+            runDrafts.push(result.draft);
 
             if (config.dryRun) {
               console.log('[agent] draft (dry-run)', result.draft);
@@ -367,6 +370,25 @@ async function main(): Promise<void> {
       count: pipelineRejections.length,
     });
   }
+
+  mkdirSync('reports', { recursive: true });
+  writeFileSync(
+    'reports/last-run-drafts.json',
+    `${JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        count: runDrafts.length,
+        drafts: runDrafts,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf-8',
+  );
+  console.log('[agent] drafts written', {
+    path: 'reports/last-run-drafts.json',
+    count: runDrafts.length,
+  });
 
   if (failedUrls.length > 0) {
     mkdirSync('reports', { recursive: true });

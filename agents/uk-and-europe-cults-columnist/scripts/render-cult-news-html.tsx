@@ -2,11 +2,12 @@
 /* @jsxRuntime classic */
 /** @jsx h */
 /** @jsxFrag Fragment */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { detect as detectLanguage } from 'tinyld';
 import { loadGroupStopwordsByLanguageFromDiscoveryLangFiles } from '../src/discoveryLangGroupStopwords.js';
 import {
   Fragment,
+  DRAFTS_PATH,
   LOG_PATH,
   OUTPUT_PATH,
   extractDraftsFromLog,
@@ -33,6 +34,36 @@ type StoryGroup = {
 };
 
 type DraftStory = ReturnType<typeof extractDraftsFromLog>[number];
+
+function loadDraftsFromJson(): DraftStory[] | undefined {
+  if (!existsSync(DRAFTS_PATH)) {
+    return undefined;
+  }
+
+  const parsed = JSON.parse(readFileSync(DRAFTS_PATH, 'utf-8')) as {
+    drafts?: Array<{
+      title?: unknown;
+      source?: {
+        url?: unknown;
+        host?: unknown;
+        publishedAt?: unknown;
+      };
+    }>;
+  };
+
+  if (!Array.isArray(parsed.drafts)) {
+    return undefined;
+  }
+
+  return parsed.drafts
+    .map((draft) => ({
+      title: typeof draft.title === 'string' ? draft.title : '',
+      url: typeof draft.source?.url === 'string' ? draft.source.url : '',
+      host: typeof draft.source?.host === 'string' ? draft.source.host : undefined,
+      publishedAt: typeof draft.source?.publishedAt === 'string' ? draft.source.publishedAt : undefined,
+    }))
+    .filter((draft) => draft.title && draft.url);
+}
 
 const RENDER_MAX_AGE_HOURS = (() => {
   const raw = process.env.CULT_NEWS_RENDER_MAX_AGE_HOURS?.trim() || process.env.DISCOVERY_MAX_AGE_HOURS?.trim();
@@ -925,7 +956,13 @@ function classifyStories(stories: EnrichedStory[]): StoryGroup[] {
 
 async function main(): Promise<void> {
   const logText = readFileSync(LOG_PATH, 'utf-8');
-  const rawDrafts = extractDraftsFromLog(logText);
+  const structuredDrafts = loadDraftsFromJson();
+  const rawDrafts = structuredDrafts ?? extractDraftsFromLog(logText);
+  if (rawDrafts.length === 0) {
+    throw new Error(
+      `No draft stories found. Run npm run dev first and confirm ${DRAFTS_PATH.pathname} exists with count > 0.`,
+    );
+  }
   const summary = extractRunSummary(logText);
 
   // Canonicalize known mirror URLs so dedupe collapses wrapped-source duplicates.
