@@ -2,7 +2,7 @@ name: Terraform - Staging
 
 on:
   push:
-    branches: [feat/11-editorial-api-cosmos]
+    branches: [feature/staging-deploy]
     paths:
       - "infra/terraform/**"
       - "functions/editorial-api/**"
