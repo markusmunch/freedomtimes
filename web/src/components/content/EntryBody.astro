@@ -40,6 +40,10 @@ const {
 				<Video value={block.value} />
 			) : block.type === 'audio' ? (
 				<Audio value={block.value} />
+			) : block.type === 'image' ? (
+				<figure class="inline-figure">
+					<img src={block.src} alt={block.alt} loading="lazy" decoding="async" />
+				</figure>
 			) : block.type === 'heading' ? (
 				block.level === 2 ? <h2>{block.text}</h2> : block.level === 3 ? <h3>{block.text}</h3> : <h4>{block.text}</h4>
 			) : block.type === 'details' ? (

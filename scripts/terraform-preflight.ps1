@@ -175,11 +175,12 @@ if (-not $env:TF_TOKEN_app_terraform_io) {
 }
 
 $requiredCommon = @(
-    "TF_TOKEN_app_terraform_io",
     "TF_VAR_auth0_domain",
     "TF_VAR_auth0_management_client_id",
     "TF_VAR_auth0_management_client_secret"
 )
+
+$requiredCommon = @("TF_TOKEN_app_terraform_io") + $requiredCommon
 
 $requiredByEnvironment = @{
     staging = @(

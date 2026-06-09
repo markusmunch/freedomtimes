@@ -24,13 +24,15 @@ crash.log
 
 # Local env files
 .env.dev
+.dev.vars
+!.dev.vars.example
 *.har
 certs/*
 infra/terraform/environments/staging/.wrangler/cache/wrangler-account.json
 infra/terraform/environments/staging/tfplan
 infra/terraform/environments/production/tfplan
 infra/terraform/environments/production/tfplan
-.wrangler/cache/wrangler-account.json
+.wrangler/*
 infra/terraform/environments/production/.wrangler/cache/wrangler-account.json
 .tmp/*
 .release/backups/*.db
@@ -48,7 +50,7 @@ request-headers
 web/.generated/archive-import/*
 .cookie
 secrets/*
-temp/*
+tmp/*
 .cursor/*
 web/.tmp/*
 web/.release/*
@@ -56,3 +58,12 @@ web/.release/*
 web/scripts/tmp/*
 freedomtimes-emdash-staging.db
 freedomtimes-emdash-staging.db-wal
+
+# Temporary debugging scripts
+add_*.py
+fix_*.py
+lower_*.py
+remove_*.py
+revert_*.py
+cleanup.py
+temp_*.txt

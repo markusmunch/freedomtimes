@@ -4,11 +4,12 @@ import Header from "../components/Header.astro";
 import PushNotificationsCallout from "../components/PushNotificationsCallout.astro";
 import Video from "../components/Video.astro";
 import Audio from "../components/Audio.astro";
+import PortableImage from "../components/PortableImage.astro";
 import PortableLink from "../components/PortableLink.astro";
 import EntryHeader from "./content/EntryHeader.astro";
 import EntryMedia from "./content/EntryMedia.astro";
 import EntryBody from "./content/EntryBody.astro";
-import { readOptionalEnv } from "../lib/auth";
+import { getHomePath, readOptionalEnv } from "../lib/auth";
 import {
 	buildPortableRenderNodes,
 	parseLegacyTextContent,
@@ -79,6 +80,7 @@ const portableComponents = {
 	type: {
 		video: Video,
 		audio: Audio,
+		image: PortableImage,
 	},
 	mark: {
 		link: PortableLink,
@@ -126,7 +128,7 @@ const socialTitle = publicationDateLabel
 			section={collectionLabel}
 			sectionUrl={collectionLabel === "Archive"
 				? "/archives"
-				: "/homepage"}
+				: getHomePath()}
 			isEditor={isEditor}
 			isSignedIn={resolvedIsSignedIn}
 		/>
@@ -276,6 +278,18 @@ const socialTitle = publicationDateLabel
 	}
 
 	:global(.hero img) {
+		display: block;
+		width: 100%;
+		height: auto;
+		border: 1px solid #eeeeee;
+	}
+
+	:global(.inline-figure) {
+		margin: 0 0 2rem;
+		max-width: 65ch;
+	}
+
+	:global(.inline-figure img) {
 		display: block;
 		width: 100%;
 		height: auto;

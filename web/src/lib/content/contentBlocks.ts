@@ -13,8 +13,37 @@ export type LegacyContentBlock =
 	| { type: 'heading'; level: 2 | 3 | 4; text: string }
 	| { type: 'paragraph'; text: string }
 	| { type: 'details'; summary: string; text: string }
+	| { type: 'image'; alt: string; src: string }
 	| { type: 'video'; value: Record<string, unknown> }
 	| { type: 'audio'; value: Record<string, unknown> };
+
+function normalizeEmdashMediaFileUrl(value: string): string | null {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	if (trimmed.startsWith('/_emdash/api/media/file/')) return trimmed;
+	if (trimmed.startsWith('/')) return null;
+	try {
+		const parsed = new URL(trimmed);
+		if (parsed.pathname.startsWith('/_emdash/api/media/file/')) {
+			return parsed.pathname;
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
+
+function normalizeImageUrl(value: string): string | null {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	if (trimmed.startsWith('/')) return trimmed;
+	try {
+		const parsed = new URL(trimmed);
+		return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+	} catch {
+		return null;
+	}
+}
 
 function readString(value: unknown): string | null {
 	return typeof value === 'string' && value.trim().length > 0 ? value : null;
@@ -172,6 +201,7 @@ export function parseLegacyTextContent(value: string): LegacyContentBlock[] {
 	const blocks: LegacyContentBlock[] = [];
 	const lines = value.split('\n');
 	const videoPattern = /^<!--ec:block\s+(\{.*\})\s+-->$/;
+	const imagePattern = /^!\[([^\]]*)\]\(([^)]+)\)$/;
 	let paragraphBuffer: string[] = [];
 	let inDetails = false;
 	let detailsSummary = '';
@@ -258,6 +288,18 @@ export function parseLegacyTextContent(value: string): LegacyContentBlock[] {
 			flushParagraph();
 			const level = headingMatch[1].length as 2 | 3 | 4;
 			blocks.push({ type: 'heading', level, text: headingMatch[2].trim() });
+			continue;
+		}
+
+		const imageMatch = line.match(imagePattern);
+		if (imageMatch) {
+			flushParagraph();
+			const rawSrc = imageMatch[2].trim();
+			const src =
+				normalizeEmdashMediaFileUrl(rawSrc)
+				?? normalizeImageUrl(rawSrc)
+				?? rawSrc;
+			blocks.push({ type: 'image', alt: imageMatch[1].trim(), src });
 			continue;
 		}
 
