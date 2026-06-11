@@ -30,9 +30,13 @@ const pushSubscribePublicKey = getPushSubscribePublicKey();
 	}
 
 	import {
+		browserNotificationPermissionError,
 		enableNotificationsForCurrentDevice,
+		getBrowserPermissionPromptMessage,
 		getNotificationSupportState,
 		initializeNativePushBridge,
+		prepareBrowserPushInfrastructure,
+		requestBrowserNotificationPermission,
 	} from '../lib/device-notifications';
 
 	const callout = document.querySelector('#push-notifications-callout');
@@ -42,6 +46,7 @@ const isNativeShell = isLikelyNativeShellClient();
 
 	if (!isNativeShell && button instanceof HTMLButtonElement && status instanceof HTMLParagraphElement) {
 		void initializeNativePushBridge();
+		void prepareBrowserPushInfrastructure();
 		void applyInitialState(button, status);
 
 		button.addEventListener('click', () => {
@@ -56,18 +61,32 @@ const isNativeShell = isLikelyNativeShellClient();
 	}
 
 	async function subscribeToNotifications(button: HTMLButtonElement, status: HTMLParagraphElement) {
+		const permissionPromise = requestBrowserNotificationPermission();
+
 		button.disabled = true;
-		status.textContent = 'Configuring notifications for this device...';
+		status.textContent = Notification.permission === 'default'
+			? getBrowserPermissionPromptMessage()
+			: 'Registering this device for notifications...';
 
 		try {
+			const permission = await permissionPromise;
+			const permissionError = browserNotificationPermissionError(permission);
+			if (permissionError) {
+				throw permissionError;
+			}
+
 			status.textContent = 'Registering this device for notifications...';
-			status.textContent = await enableNotificationsForCurrentDevice(button.dataset.publicKey || '');
+			status.textContent = await enableNotificationsForCurrentDevice(
+				button.dataset.publicKey || '',
+				permission,
+			);
+			button.disabled = true;
 		} catch (error) {
 			console.error('[notifications] subscribe failed', error);
 			status.textContent = error instanceof Error
 				? error.message
 				: 'Notification setup failed. Check the console and try again.';
-			button.disabled = false;
+			button.disabled = Notification.permission !== 'denied';
 		}
 	}
 </script>

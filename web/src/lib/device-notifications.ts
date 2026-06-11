@@ -7,6 +7,69 @@ const NATIVE_CHANNEL_ID = 'reader-alerts';
 const NATIVE_CHANNEL_NAME = 'Reader Alerts';
 const NATIVE_CHANNEL_DESCRIPTION = `Breaking and important ${SITE_DISPLAY_NAME} notifications`;
 const REGISTRATION_TIMEOUT_MS = 30000;
+const BROWSER_PUSH_TIMEOUT_MS = 30000;
+
+type BrowserKind = 'chrome' | 'edge' | 'firefox' | 'safari' | 'other';
+
+type BrowserNotificationMessages = {
+  permissionPrompt: string;
+  permissionTimeout: string;
+  blocked: string;
+  dismissed: string;
+};
+
+const BROWSER_NOTIFICATION_MESSAGES: Record<BrowserKind, BrowserNotificationMessages> = {
+  edge: {
+    permissionPrompt:
+      'In Microsoft Edge, look for a bell icon at the right end of the address bar (not the lock menu), choose Allow, then click Enable notifications again if needed.',
+    permissionTimeout:
+      'Edge did not show a notification prompt. Open Settings → Cookies and site permissions → Notifications, add this site under Allow, reload, then try again.',
+    blocked:
+      'Notifications are blocked in Edge. Open Settings → Cookies and site permissions → Notifications, allow this site, reload, then try again.',
+    dismissed:
+      'Notification permission was dismissed. Click Enable notifications to try again.',
+  },
+  chrome: {
+    permissionPrompt:
+      'Choose Allow in the Chrome prompt near the address bar. If you do not see it, check for a notifications icon at the right end of the address bar.',
+    permissionTimeout:
+      'Chrome did not show a notification prompt. Open the lock icon → Site settings → Notifications, set this site to Allow, reload, then try again.',
+    blocked:
+      'Notifications are blocked in Chrome. Open the lock icon → Site settings → Notifications, set this site to Allow, reload, then try again.',
+    dismissed:
+      'Notification permission was dismissed. Click Enable notifications to try again.',
+  },
+  firefox: {
+    permissionPrompt:
+      'Choose Allow in the Firefox prompt that appears from the address bar.',
+    permissionTimeout:
+      'Firefox did not show a notification prompt. Open the lock icon → Permissions, set Notifications to Allow, reload, then try again.',
+    blocked:
+      'Notifications are blocked in Firefox. Open the lock icon → Permissions, set Notifications to Allow, reload, then try again.',
+    dismissed:
+      'Notification permission was dismissed. Click Enable notifications to try again.',
+  },
+  safari: {
+    permissionPrompt:
+      'Choose Allow in the Safari prompt when it appears.',
+    permissionTimeout:
+      'Safari did not show a notification prompt. Open Safari → Settings → Websites → Notifications, allow this site, reload, then try again.',
+    blocked:
+      'Notifications are blocked in Safari. Open Safari → Settings → Websites → Notifications, allow this site, reload, then try again.',
+    dismissed:
+      'Notification permission was dismissed. Click Enable notifications to try again.',
+  },
+  other: {
+    permissionPrompt:
+      'Choose Allow when your browser asks for notification permission.',
+    permissionTimeout:
+      'Your browser did not show a notification prompt. Open this site\'s settings from the address bar, set Notifications to Allow, reload, then try again.',
+    blocked:
+      'Notifications are blocked in this browser. Open site settings from the address bar, set Notifications to Allow, reload, then try again.',
+    dismissed:
+      'Notification permission was dismissed. Click Enable notifications to try again.',
+  },
+};
 
 type NativePlatform = 'android' | 'ios';
 
@@ -90,6 +153,14 @@ export async function getNotificationSupportState(publicKey: string): Promise<No
     };
   }
 
+  if (Notification.permission === 'denied') {
+    return {
+      supported: true,
+      buttonDisabled: true,
+      message: getBrowserNotificationsBlockedMessage(),
+    };
+  }
+
   return {
     supported: true,
     buttonDisabled: false,
@@ -97,13 +168,72 @@ export async function getNotificationSupportState(publicKey: string): Promise<No
   };
 }
 
-export async function enableNotificationsForCurrentDevice(publicKey: string): Promise<string> {
+export function requestBrowserNotificationPermission(): Promise<NotificationPermission> {
+  if (!('Notification' in window)) {
+    return Promise.reject(new Error('This browser does not support web push notifications.'));
+  }
+
+  if (Notification.permission !== 'default') {
+    return Promise.resolve(Notification.permission);
+  }
+
+  return withTimeout(
+    Notification.requestPermission(),
+    BROWSER_PUSH_TIMEOUT_MS,
+    getBrowserPermissionTimeoutMessage(),
+  );
+}
+
+export function getBrowserPermissionPromptMessage(): string {
+  return browserNotificationMessages().permissionPrompt;
+}
+
+export function getBrowserPermissionTimeoutMessage(): string {
+  return browserNotificationMessages().permissionTimeout;
+}
+
+export function getBrowserNotificationsBlockedMessage(): string {
+  return browserNotificationMessages().blocked;
+}
+
+export function getBrowserPermissionDismissedMessage(): string {
+  return browserNotificationMessages().dismissed;
+}
+
+export function browserNotificationPermissionError(permission: NotificationPermission): Error | null {
+  if (permission === 'granted') {
+    return null;
+  }
+
+  if (permission === 'denied') {
+    return new Error(getBrowserNotificationsBlockedMessage());
+  }
+
+  return new Error(getBrowserPermissionDismissedMessage());
+}
+
+export async function prepareBrowserPushInfrastructure(): Promise<void> {
+  if (isNativeNotificationPlatform() || !('serviceWorker' in navigator)) {
+    return;
+  }
+
+  try {
+    await ensureBrowserServiceWorkerRegistration();
+  } catch (error) {
+    console.warn('[notifications] service worker pre-registration failed', error);
+  }
+}
+
+export async function enableNotificationsForCurrentDevice(
+  publicKey: string,
+  permission?: NotificationPermission,
+): Promise<string> {
   if (isNativeNotificationPlatform()) {
     await enableNativePushNotifications();
     return 'Notifications enabled for this app.';
   }
 
-  await enableBrowserPushNotifications(publicKey);
+  await enableBrowserPushNotifications(publicKey, permission);
   return 'Notifications enabled for this browser.';
 }
 
@@ -245,22 +375,94 @@ async function ensureNativePushRegistration(): Promise<void> {
   return nativeAutoRegistrationPromise;
 }
 
-async function enableBrowserPushNotifications(publicKey: string): Promise<void> {
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') {
-    throw new Error(permission === 'denied'
-      ? 'Notifications were blocked in the browser.'
-      : 'Notification permission was dismissed.');
+async function ensureBrowserServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
+  if (!('serviceWorker' in navigator)) {
+    throw new Error('Service workers are not supported in this browser.');
   }
 
-  const registration = await navigator.serviceWorker.ready;
+  const existingRegistration = await navigator.serviceWorker.getRegistration('/');
+  if (!existingRegistration?.active) {
+    await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
+  }
+
+  return navigator.serviceWorker.ready;
+}
+
+async function enableBrowserPushNotifications(
+  publicKey: string,
+  requestedPermission?: NotificationPermission,
+): Promise<void> {
+  const permission = requestedPermission ?? await Notification.requestPermission();
+  if (permission !== 'granted') {
+    throw browserNotificationPermissionError(permission)
+      ?? new Error(getBrowserPermissionDismissedMessage());
+  }
+
+  const registration = await withTimeout(
+    ensureBrowserServiceWorkerRegistration(),
+    BROWSER_PUSH_TIMEOUT_MS,
+    'Timed out waiting for the notification service worker. Reload the page and try again.',
+  );
+
   const existingSubscription = await registration.pushManager.getSubscription();
-  const subscription = existingSubscription ?? await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: decodeBase64Url(publicKey),
+  const subscription = existingSubscription ?? await withTimeout(
+    registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: decodeBase64Url(publicKey),
+    }),
+    BROWSER_PUSH_TIMEOUT_MS,
+    'Timed out subscribing this browser for push notifications. Reload the page and try again.',
+  );
+
+  await withTimeout(
+    persistSubscription(subscription.toJSON()),
+    BROWSER_PUSH_TIMEOUT_MS,
+    'Timed out saving this device for notifications. Try again in a moment.',
+  );
+}
+
+function detectBrowserKind(): BrowserKind {
+  if (typeof navigator === 'undefined') {
+    return 'other';
+  }
+
+  const userAgent = navigator.userAgent;
+
+  if (/\bEdg\//.test(userAgent)) {
+    return 'edge';
+  }
+
+  if (/\bFirefox\//.test(userAgent)) {
+    return 'firefox';
+  }
+
+  if (/\bSafari\//.test(userAgent) && !/\b(Chromium|Chrome|Edg)\//.test(userAgent)) {
+    return 'safari';
+  }
+
+  if (/\bChrome\//.test(userAgent)) {
+    return 'chrome';
+  }
+
+  return 'other';
+}
+
+function browserNotificationMessages(): BrowserNotificationMessages {
+  return BROWSER_NOTIFICATION_MESSAGES[detectBrowserKind()];
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId = 0;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
   });
 
-  await persistSubscription(subscription.toJSON());
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 async function persistSubscription(payload: unknown): Promise<void> {
